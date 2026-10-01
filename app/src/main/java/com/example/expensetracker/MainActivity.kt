@@ -1,51 +1,64 @@
-package com.example.expensetracker
+package com.paolorossi.expensetracker
 
+import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import com.example.expensetracker.ui.common.PlaceholderScreen
-import com.example.expensetracker.ui.home.MainScreen
-import com.example.expensetracker.ui.home.MainViewModel
-import com.example.expensetracker.ui.theme.ExpenseTrackerTheme
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.paolorossi.expensetracker.data.recurring.RecurringEditRequest
+import com.paolorossi.expensetracker.navigation.AppNavigation
+import com.paolorossi.expensetracker.ui.AppViewModelFactory
+import com.paolorossi.expensetracker.ui.auth.RootGate
+import com.paolorossi.expensetracker.ui.auth.RootState
+import com.paolorossi.expensetracker.ui.auth.RootViewModel
+import com.paolorossi.expensetracker.ui.theme.ExpenseTrackerTheme
 
-class MainActivity : ComponentActivity() {
+/**
+ * Single-activity host. Extends [FragmentActivity] because `BiometricPrompt`
+ * requires it (Design/03 auth flow).
+ */
+class MainActivity : FragmentActivity() {
+    private val editRequest = mutableStateOf<RecurringEditRequest?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        editRequest.value = RecurringEditRequest.from(intent)
+
         setContent {
             ExpenseTrackerTheme {
-                var destination by mutableStateOf(Destination.MAIN)
-                Scaffold(modifier = Modifier.fillMaxSize()) { _ ->
-                    when (destination) {
-                        Destination.MAIN -> MainScreen(
-                            state = MainViewModel().uiState.value,
-                            onAddExpense = { destination = Destination.ADD_EXPENSE },
-                            onAddIncome = { destination = Destination.ADD_INCOME },
-                            onManageCategories = { destination = Destination.CATEGORIES },
-                            onRecurring = { destination = Destination.RECURRING },
+                val rootViewModel: RootViewModel = viewModel(factory = AppViewModelFactory)
+                val state by rootViewModel.state.collectAsStateWithLifecycle()
+
+                when (val current = state) {
+                    is RootState.Ready ->
+                        AppNavigation(
+                            user = current.user,
+                            editRequest = editRequest.value,
+                            onEditConsumed = { editRequest.value = null },
+                            onSignOut = rootViewModel::signOut,
                         )
-                        Destination.ADD_EXPENSE -> PlaceholderScreen("Add Expense")
-                        Destination.ADD_INCOME -> PlaceholderScreen("Add Income")
-                        Destination.CATEGORIES -> PlaceholderScreen("Categories & Vendors")
-                        Destination.RECURRING -> PlaceholderScreen("Recurring")
-                    }
+
+                    else ->
+                        RootGate(
+                            state = current,
+                            onSignIn = { rootViewModel.signIn(this@MainActivity) },
+                            onUnlocked = rootViewModel::onUnlocked,
+                            onSignOut = rootViewModel::signOut,
+                            onRetry = rootViewModel::refreshMembership,
+                        )
                 }
             }
         }
     }
-}
 
-private enum class Destination {
-    MAIN,
-    ADD_EXPENSE,
-    ADD_INCOME,
-    CATEGORIES,
-    RECURRING,
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        editRequest.value = RecurringEditRequest.from(intent)
+    }
 }

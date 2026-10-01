@@ -1,13 +1,18 @@
 *.iml
 .gradle
+.kotlin
+.idea
 /local.properties
-/.idea
+local.properties
 .DS_Store
-/build
-/captures
+.captures
 .externalNativeBuild
 .cxx
-local.properties
+
+# Build outputs (root and every module)
+build/
+**/build/
+captures/
 
 # Secrets / machine-specific Firebase config — must never be committed
 google-services.json
@@ -15,3 +20,14 @@ google-services.json
 *.keystore
 *.jks
 keystore.properties
+
+# Firebase CLI / emulator state
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+**/service-account*.json
+
+# Node (Firestore rules tests)
+firestore-tests/node_modules/
+firestore-tests/package-lock.json

@@ -1,0 +1,86 @@
+rules_version = '2';
+
+// Expense Tracker security rules (Design/01 §5, Design/03 "Firestore rules").
+//
+// Access model:
+//  - Everything under households/{id}/** is readable/writable only by signed-in
+//    users whose email is in households/{id}.memberEmails (case-insensitive).
+//  - Transactions are creator-only for update/delete; read is open to members.
+//  - Recurring instances (deterministic rec_ ids) and occurrence documents are
+//    create-only, which makes cross-device confirmation idempotent.
+//  - memberEmails is append-only: no update may remove an existing entry.
+//
+// Manual/automated test cases live in firestore-tests/firestore.rules.test.js:
+//   1. same-household read/write allowed
+//   2. cross-household read/write denied
+//   3. non-member denied
+//   4. creator-only edit/delete enforced
+//   5. memberEmails append-only enforced
+//   6. recurring confirmation idempotent (second create of same rec_ id rejected)
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+
+    function email() {
+      return request.auth.token.email.lower();
+    }
+
+    function isMember(householdId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/households/$(householdId))
+             .data.memberEmails
+             .map(function(e) { return e.lower(); })
+             .hasAny([email()]);
+    }
+
+    match /households/{householdId} {
+      // Clients cannot create or delete households — the first household is
+      // bootstrapped by hand (00-prerequisites.md §7). Members can read.
+      allow read: if isMember(householdId);
+      allow create, delete: if false;
+
+      // Append-only membership: only memberEmails may change and no existing
+      // entry may be removed (no "remove member" feature yet).
+      allow update: if isMember(householdId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberEmails'])
+        && request.resource.data.memberEmails.hasAll(resource.data.memberEmails);
+
+      match /categories/{categoryId} {
+        allow read: if isMember(householdId);
+        allow create, update, delete: if isMember(householdId);
+      }
+
+      match /vendors/{vendorId} {
+        allow read, create, update, delete: if isMember(householdId);
+      }
+
+      match /transactions/{transactionId} {
+        allow read: if isMember(householdId);
+
+        allow create: if isMember(householdId)
+          && request.resource.data.createdByUid == request.auth.uid;
+
+        // Creator-only. Recurring instances are create-only, so an attempted
+        // overwrite of a `rec_...` transaction is rejected here (idempotency).
+        allow update, delete: if isMember(householdId)
+          && resource.data.createdByUid == request.auth.uid
+          && resource.data.isRecurringInstance != true;
+      }
+
+      match /recurringRules/{ruleId} {
+        allow read: if isMember(householdId);
+        allow create, update, delete: if isMember(householdId);
+
+        match /occurrences/{occurrenceId} {
+          allow read: if isMember(householdId);
+          // Create-only: a second confirm/skip from another device is rejected.
+          allow create: if isMember(householdId);
+          allow update, delete: if false;
+        }
+      }
+    }
+  }
+}

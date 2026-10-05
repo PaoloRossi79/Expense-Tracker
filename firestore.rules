@@ -30,7 +30,7 @@ service cloud.firestore {
 
     function isMember(householdId) {
       return signedIn()
-        && get(/databases/$(database)/documents/households/$(householdId))
+        && get(/databases/{database}/documents/households/{householdId})
              .data.memberEmails
              .map(function(e) { return e.lower(); })
              .hasAny([email()]);

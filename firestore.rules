@@ -34,10 +34,6 @@ service cloud.firestore {
          .data.memberEmails.hasAny([email()]);
     }
 
-    function email() {
-      return request.auth.token.email.lower();
-    }
-
     match /households/{householdId} {
       // Clients cannot create or delete households — the first household is
       // bootstrapped by hand (00-prerequisites.md §7). Members can read.

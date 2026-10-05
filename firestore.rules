@@ -31,9 +31,11 @@ service cloud.firestore {
     function isMember(householdId) {
       return signedIn()
         && get(/databases/{database}/documents/households/{householdId})
-             .data.memberEmails
-             .map(function(e) { return e.lower(); })
-             .hasAny([email()]);
+         .data.memberEmails.hasAny([email()]);
+    }
+
+    function email() {
+      return request.auth.token.email.lower();
     }
 
     match /households/{householdId} {

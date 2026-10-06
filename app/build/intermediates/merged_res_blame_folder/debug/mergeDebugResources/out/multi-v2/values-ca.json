@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.paolorossi.expensetracker.app-mergeDebugResources-74:/values-ca/values-ca.xml",
+            "outputFile": "com.paolorossi.expensetracker.app-mergeDebugResources-75:/values-ca/values-ca.xml",
             "map": [
                 {
                     "source": "C:\\Users\\dell\\.gradle\\caches\\9.8.0\\transforms\\a13d8cb0a8fe5639ee3c5df5aab8d9cb\\transformed\\play-services-basement-18.4.0\\res\\values-ca\\values.xml",

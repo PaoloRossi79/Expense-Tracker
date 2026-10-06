@@ -394,6 +394,7 @@
     <string name="default_error_message">"Invalid input"</string>
     <string name="default_error_msg">Unknown error</string>
     <string name="default_popup_window_title" ns2:ignore="ExtraTranslation">"Pop-Up Window"</string>
+    <string name="default_web_client_id" translatable="false">62951174975-5qo0fj238domghlo95l8lpogdp86m8i0.apps.googleusercontent.com</string>
     <string name="dropdown_menu">"Dropdown menu"</string>
     <string name="fallback_menu_item_copy_link">Copy link</string>
     <string name="fallback_menu_item_open_in_browser">Open in browser</string>
@@ -405,9 +406,14 @@
     <string name="fingerprint_error_no_fingerprints">No fingerprints enrolled.</string>
     <string name="fingerprint_error_user_canceled">Fingerprint operation canceled by user.</string>
     <string name="fingerprint_not_recognized">Not recognized</string>
+    <string name="gcm_defaultSenderId" translatable="false">62951174975</string>
     <string name="generic_error_no_device_credential">No PIN, pattern, or password set.</string>
     <string name="generic_error_no_keyguard">This device does not support PIN, pattern, or password.</string>
     <string name="generic_error_user_canceled">Authentication canceled by user.</string>
+    <string name="google_api_key" translatable="false">AIzaSyAmz81AVFbI7Wh8WGHDIAIUDaymkll7B_g</string>
+    <string name="google_app_id" translatable="false">1:62951174975:android:b852749beb3e027022598a</string>
+    <string name="google_crash_reporting_api_key" translatable="false">AIzaSyAmz81AVFbI7Wh8WGHDIAIUDaymkll7B_g</string>
+    <string name="google_storage_bucket" translatable="false">family-expense-tracker-pr79.firebasestorage.app</string>
     <string name="in_progress">In progress</string>
     <string name="indeterminate">Partially checked</string>
     <string name="m3c_bottom_sheet_collapse_description">Collapse bottom sheet</string>
@@ -473,6 +479,7 @@
     <string name="m3c_tooltip_pane_description">Tooltip</string>
     <string name="navigation_menu">"Navigation menu"</string>
     <string name="not_selected">Not selected</string>
+    <string name="project_id" translatable="false">family-expense-tracker-pr79</string>
     <string name="range_end">"Range end"</string>
     <string name="range_start">"Range start"</string>
     <string name="search_menu_title">Search</string>

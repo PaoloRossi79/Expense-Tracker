@@ -29,11 +29,12 @@ service cloud.firestore {
     }
 
     function isMember(householdId) {
+      // memberEmails are stored lower-cased (00-prerequisites.md §7); email()
+      // lower-cases the signed-in user's address for a case-insensitive match.
+      // (Firestore rules have no map()/lambda, so we rely on stored lower case.)
       return signedIn()
         && get(/databases/$(database)/documents/households/$(householdId))
-             .data.memberEmails
-             .map(function(e) { return e.lower(); })
-             .hasAny([email()]);
+             .data.memberEmails.hasAny([email()]);
     }
 
     match /households/{householdId} {

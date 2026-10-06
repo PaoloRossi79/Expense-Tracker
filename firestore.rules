@@ -34,7 +34,7 @@ service cloud.firestore {
       // (Firestore rules have no map()/lambda, so we rely on stored lower case.)
       return signedIn()
         && get(/databases/$(database)/documents/households/$(householdId))
-             .data.memberEmails.hasAny([email()]);
+         .data.memberEmails.hasAny([email()]);
     }
 
     match /households/{householdId} {

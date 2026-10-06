@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.paolorossi.expensetracker.app-mergeDebugResources-74:/values-pl/values-pl.xml",
+            "outputFile": "com.paolorossi.expensetracker.app-mergeDebugResources-75:/values-pl/values-pl.xml",
             "map": [
                 {
                     "source": "C:\\Users\\dell\\.gradle\\caches\\9.8.0\\transforms\\d17ad0a060f537351b20a15419e8d58f\\transformed\\biometric-1.1.0\\res\\values-pl\\values-pl.xml",

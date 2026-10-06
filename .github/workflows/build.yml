@@ -16,6 +16,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -50,6 +53,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -72,6 +78,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
 
       - uses: actions/setup-java@v4
         with:

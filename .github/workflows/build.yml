@@ -72,13 +72,19 @@ jobs:
           firebase emulators:start --only firestore --project demo-expense-tracker > emulator.log 2>&1 &
           EMULATOR_PID=$!
           for i in {1..30}; do
-            if curl -s http://localhost:8080/ | grep -q "Firestore Emulator"; then
+            if curl -sf http://localhost:8080/health 2>/dev/null | grep -q ok || \
+               curl -sf http://127.0.0.1:8080/health 2>/dev/null | grep -q ok || \
+               curl -sf http://localhost:4000/health 2>/dev/null | grep -q ok || \
+               curl -sf http://127.0.0.1:4000/health 2>/dev/null | grep -q ok; then
               echo "Emulator ready"
               break
             fi
             sleep 2
           done
-          if ! curl -s http://localhost:8080/ | grep -q "Firestore Emulator"; then
+          if ! curl -sf http://localhost:8080/health 2>/dev/null | grep -q ok && \
+             ! curl -sf http://127.0.0.1:8080/health 2>/dev/null | grep -q ok && \
+             ! curl -sf http://localhost:4000/health 2>/dev/null | grep -q ok && \
+             ! curl -sf http://127.0.0.1:4000/health 2>/dev/null | grep -q ok; then
             echo "Emulator failed to start"
             cat emulator.log
             kill $EMULATOR_PID

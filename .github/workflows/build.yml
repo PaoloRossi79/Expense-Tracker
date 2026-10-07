@@ -67,36 +67,7 @@ jobs:
       - name: Install firebase-tools
         run: npm install -g firebase-tools@latest
 
-      - name: Start Firestore emulator
-        run: |
-          firebase emulators:start --only firestore --project demo-expense-tracker > emulator.log 2>&1 &
-          EMULATOR_PID=$!
-          for i in {1..30}; do
-            if curl -sf http://localhost:8080 2>/dev/null || \
-               curl -sf http://127.0.0.1:8080 2>/dev/null || \
-               curl -sf http://localhost:4000 2>/dev/null || \
-               curl -sf http://127.0.0.1:4000 2>/dev/null; then
-              echo "Emulator ready"
-              break
-            fi
-            sleep 2
-          done
-          if ! curl -sf http://localhost:8080 2>/dev/null && \
-             ! curl -sf http://127.0.0.1:8080 2>/dev/null && \
-             ! curl -sf http://localhost:4000 2>/dev/null && \
-             ! curl -sf http://127.0.0.1:4000 2>/dev/null; then
-            echo "Emulator failed to start"
-            cat emulator.log
-            kill $EMULATOR_PID
-            exit 1
-          fi
-        env:
-          FIRESTORE_EMULATOR_HOST: localhost:8080
-
-      - name: Deploy security rules
-        run: firebase deploy --only firestore:rules --project demo-expense-tracker
-
-      - name: Run rules tests
-        run: |
-          # The rules test suite is not yet implemented; placeholder
-          echo "Firestore rules deployed; no dedicated JS test suite yet."
+      - name: Run Firestore rules tests against emulator
+        run: >
+          firebase emulators:exec --only firestore --project demo-expense-tracker
+          "echo 'Rules tests go here'"

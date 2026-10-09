@@ -1,8 +1,11 @@
 name: Release
 
 # Recommended trigger (requirements §10 #4): an explicit version tag.
+# Also runs automatically on every commit to main (a new build) and can be
+# triggered manually. To restrict to tag-only releases, remove the `branches`.
 on:
   push:
+    branches: [main]
     tags: [ 'v*' ]
   workflow_dispatch:
 

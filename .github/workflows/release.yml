@@ -38,14 +38,6 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
-      - name: Print release signing cert fingerprints
-        run: ./gradlew signingReport
-        env:
-          ORG_GRADLE_PROJECT_RELEASE_KEYSTORE_PATH: release.jks
-          ORG_GRADLE_PROJECT_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          ORG_GRADLE_PROJECT_RELEASE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          ORG_GRADLE_PROJECT_RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-
       - name: Run tests (a tag can be pushed from any commit)
         run: ./gradlew ktlintCheck testDebugUnitTest
 

@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<full-backup-content>
-    <!-- Firestore/offline data is re-fetched from the cloud, so exclude local caches. -->
-    <exclude domain="database" path="." />
-</full-backup-content>

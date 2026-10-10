@@ -11,6 +11,7 @@ concurrency:
 
 jobs:
   # Fast feedback: static analysis, unit tests, and a debug build.
+  # test
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30

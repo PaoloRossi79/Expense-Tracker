@@ -34,7 +34,10 @@ jobs:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
 
       - name: Decode release keystore
-        run: echo "$KEYSTORE_BASE64" | base64 -d > release.jks
+        # Must land where app/build.gradle.kts resolves RELEASE_KEYSTORE_PATH
+        # from (the :app module dir), otherwise the release build silently falls
+        # back to the debug keystore and its (unregistered) SHA-1 breaks sign-in.
+        run: echo "$KEYSTORE_BASE64" | base64 -d > app/release.jks
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 

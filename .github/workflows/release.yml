@@ -41,24 +41,6 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
-      # TEMPORARY diagnostic — remove once signing is green. Prints no secrets.
-      - name: Diagnose keystore (temporary)
-        run: |
-          echo "decoded keystore bytes : $(stat -c %s app/release.jks)"
-          echo "decoded keystore sha256: $(sha256sum app/release.jks | cut -d' ' -f1)"
-          echo "expected keystore sha256: 06b62334da6ed10f5cfa52fc898bc9f531b9040e9cdb0aa2ba3eb7ba6efa1cb1"
-          trim() { printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
-          [ "$KEYSTORE_PASSWORD" = "$(trim "$KEYSTORE_PASSWORD")" ] && echo "KEYSTORE_PASSWORD: no surrounding whitespace" || echo "WARN: KEYSTORE_PASSWORD has surrounding whitespace"
-          [ "$KEY_PASSWORD" = "$(trim "$KEY_PASSWORD")" ] && echo "KEY_PASSWORD: no surrounding whitespace" || echo "WARN: KEY_PASSWORD has surrounding whitespace"
-          echo "KEY_ALIAS: [$KEY_ALIAS]"
-          keytool -list -keystore app/release.jks -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1 && echo "store password: OK" || echo "store password: FAIL"
-          keytool -list -keystore app/release.jks -storepass "$(trim "$KEYSTORE_PASSWORD")" >/dev/null 2>&1 && echo "store password (trimmed): OK" || echo "store password (trimmed): FAIL"
-          keytool -list -v -keystore app/release.jks -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" -keypass "$KEY_PASSWORD" 2>/dev/null | grep -E "SHA1:|SHA256:" | sed 's/^[[:space:]]*//' || echo "fingerprint unavailable (store or key password wrong)"
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-
       - name: Run tests (a tag can be pushed from any commit)
         run: ./gradlew ktlintCheck testDebugUnitTest
 

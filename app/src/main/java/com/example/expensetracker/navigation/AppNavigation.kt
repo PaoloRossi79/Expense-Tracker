@@ -72,8 +72,11 @@ fun AppNavigation(
         }
 
     fun navigateTo(route: String) {
+        val isAddRoute = route == Routes.ADD_EXPENSE || route == Routes.ADD_INCOME
         navController.navigate(route) {
-            popUpTo(Routes.HOME) { saveState = true }
+            if (!isAddRoute) {
+                popUpTo(Routes.HOME) { saveState = true }
+            }
             launchSingleTop = true
             restoreState = true
         }

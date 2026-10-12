@@ -31,3 +31,4 @@ ui-debug.log
 # Node (Firestore rules tests)
 firestore-tests/node_modules/
 firestore-tests/package-lock.json
+.kilo/kilo.jsonc

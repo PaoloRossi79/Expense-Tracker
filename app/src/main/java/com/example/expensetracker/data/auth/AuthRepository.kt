@@ -38,11 +38,15 @@ class FirebaseGoogleAuthRepository(
     private val auth: FirebaseAuth,
     private val webClientId: String,
 ) : AuthRepository {
-    override val currentUser: AuthUser? get() = auth.currentUser?.toAuthUser()
+    /**
+     * Anonymous users are a diagnostics-only transport identity (see
+     * data/diagnostics) and must never count as an app session.
+     */
+    override val currentUser: AuthUser? get() = auth.currentUser?.toAuthUserOrNull()
 
     override fun observeAuthState(): Flow<AuthUser?> =
         callbackFlow {
-            val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser?.toAuthUser()) }
+            val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser?.toAuthUserOrNull()) }
             auth.addAuthStateListener(listener)
             awaitClose { auth.removeAuthStateListener(listener) }
         }
@@ -79,6 +83,9 @@ class FirebaseGoogleAuthRepository(
 
     override fun signOut() = auth.signOut()
 }
+
+/** Null for anonymous sessions: those are not an app identity. */
+private fun FirebaseUser.toAuthUserOrNull(): AuthUser? = if (isAnonymous) null else toAuthUser()
 
 private fun FirebaseUser.toAuthUser(): AuthUser =
     AuthUser(

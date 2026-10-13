@@ -31,16 +31,26 @@ class RootViewModel : ViewModel() {
     private val _state = MutableStateFlow<RootState>(RootState.Loading)
     val state: StateFlow<RootState> = _state.asStateFlow()
 
+    /** Human-readable outcome of the last diagnostics upload attempt. */
+    private val _diagnosticsStatus = MutableStateFlow<String?>(null)
+    val diagnosticsStatus: StateFlow<String?> = _diagnosticsStatus.asStateFlow()
+
+    /** Stable per-install id, surfaced in the UI so a user can relay it. */
+    val installId: String? get() = ServiceLocator.diagnosticsInstallId
+
     private var unlocked = false
     private var lastUser: AuthUser? = null
     private var lastHousehold: Household? = null
     private var lastError: String? = null
+    private var lastFailure: Throwable? = null
+    private var diagnosticsInFlight = false
 
     init {
         if (!ServiceLocator.isConfigured) {
             _state.value = RootState.NotConfigured
         } else {
             observeAuth()
+            viewModelScope.launch { ServiceLocator.diagnosticsReporter?.flushPending() }
         }
     }
 
@@ -82,12 +92,53 @@ class RootViewModel : ViewModel() {
         viewModelScope.launch {
             _state.value = RootState.Loading
             val result = ServiceLocator.authRepository.signInWithGoogle(activity)
-            lastError = result.exceptionOrNull()?.message
-            if (result.isFailure) _state.value = RootState.SignedOut(lastError)
+            lastFailure = result.exceptionOrNull()
+            lastError = lastFailure?.message ?: lastFailure?.javaClass?.simpleName
+            if (result.isFailure) {
+                _state.value = RootState.SignedOut(lastError)
+                // Cancelling the account picker is not a failure worth reporting.
+                if (!isUserCancellation(lastFailure)) {
+                    reportDiagnostics(trigger = "sign_in_failure", note = null)
+                }
+            }
         }
     }
 
-    /** Called by the UI after [BiometricGate] succeeds. */
+    /** Uploads a diagnostic report from this device (manual or automatic). */
+    fun sendDiagnostics(note: String?) {
+        viewModelScope.launch { reportDiagnostics(trigger = "manual", note = note) }
+    }
+
+    private suspend fun reportDiagnostics(
+        trigger: String,
+        note: String?,
+    ) {
+        if (diagnosticsInFlight) return
+        diagnosticsInFlight = true
+        try {
+            val reporter = ServiceLocator.diagnosticsReporter
+            if (reporter == null) {
+                _diagnosticsStatus.value = "Diagnostics unavailable (Firebase not configured)"
+                return
+            }
+            _diagnosticsStatus.value = "Sending diagnostics…"
+            _diagnosticsStatus.value =
+                reporter.send(lastFailure, trigger, note).fold(
+                    onSuccess = { id -> "Diagnostics sent · id …${id.takeLast(12)}" },
+                    onFailure = { t ->
+                        "Diagnostics failed: ${t.message ?: t.javaClass.simpleName}"
+                    },
+                )
+        } finally {
+            diagnosticsInFlight = false
+        }
+    }
+
+    /** A cancelled account picker surfaces as an ordinary failure result. */
+    private fun isUserCancellation(throwable: Throwable?): Boolean =
+        throwable?.javaClass?.name?.contains("Cancel", ignoreCase = true) == true
+
+    /** Called by the UI after [com.paolorossi.expensetracker.data.auth.BiometricGate] succeeds. */
     fun onUnlocked() {
         unlocked = true
         recompute()

@@ -9,6 +9,8 @@ import com.google.firebase.firestore.PersistentCacheSettings
 import com.paolorossi.expensetracker.BuildConfig
 import com.paolorossi.expensetracker.data.auth.AuthRepository
 import com.paolorossi.expensetracker.data.auth.FirebaseGoogleAuthRepository
+import com.paolorossi.expensetracker.data.diagnostics.DiagnosticsCollector
+import com.paolorossi.expensetracker.data.diagnostics.DiagnosticsReporter
 import com.paolorossi.expensetracker.data.repository.CategoryRepository
 import com.paolorossi.expensetracker.data.repository.FirestoreCategoryRepository
 import com.paolorossi.expensetracker.data.repository.FirestoreHouseholdRepository
@@ -46,6 +48,14 @@ object ServiceLocator {
     lateinit var recurringRepository: RecurringRepository
         private set
 
+    /** Remote diagnostics sink (Firestore `diagnostics`); null until Firebase init. */
+    var diagnosticsReporter: DiagnosticsReporter? = null
+        private set
+
+    /** Stable per-install id, surfaced in the UI so a user can relay it. */
+    var diagnosticsInstallId: String? = null
+        private set
+
     /** Household document id from 00-prerequisites.md §7. */
     val householdId: String get() = BuildConfig.HOUSEHOLD_ID
 
@@ -78,5 +88,7 @@ object ServiceLocator {
         categoryRepository = FirestoreCategoryRepository(firestore)
         vendorRepository = FirestoreVendorRepository(firestore)
         recurringRepository = FirestoreRecurringRepository(firestore)
+        diagnosticsReporter = DiagnosticsReporter(appContext, firestore)
+        diagnosticsInstallId = DiagnosticsCollector.installId(appContext)
     }
 }

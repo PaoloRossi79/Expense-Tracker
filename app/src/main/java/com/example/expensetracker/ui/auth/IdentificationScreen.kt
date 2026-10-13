@@ -17,6 +17,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,15 +44,25 @@ import kotlinx.coroutines.launch
 @Composable
 fun RootGate(
     state: RootState,
+    installId: String?,
+    diagnosticsStatus: String?,
     onSignIn: () -> Unit,
     onUnlocked: () -> Unit,
     onSignOut: () -> Unit,
     onRetry: () -> Unit,
+    onSendDiagnostics: (String?) -> Unit,
 ) {
     when (state) {
         RootState.Loading -> LoadingBox()
         RootState.NotConfigured -> SetupRequiredScreen()
-        is RootState.SignedOut -> SignInScreen(error = state.error, onSignIn = onSignIn)
+        is RootState.SignedOut ->
+            SignInScreen(
+                error = state.error,
+                installId = installId,
+                diagnosticsStatus = diagnosticsStatus,
+                onSignIn = onSignIn,
+                onSendDiagnostics = onSendDiagnostics,
+            )
         is RootState.NotAMember -> NotAMemberScreen(state.email, onSignOut, onRetry)
         RootState.Locked -> LockedScreen(onUnlocked = onUnlocked, onSignOut = onSignOut)
         is RootState.Ready -> LoadingBox()
@@ -121,8 +132,12 @@ private fun SetupRequiredScreen() {
 @Composable
 private fun SignInScreen(
     error: String?,
+    installId: String?,
+    diagnosticsStatus: String?,
     onSignIn: () -> Unit,
+    onSendDiagnostics: (String?) -> Unit,
 ) {
+    var note by remember { mutableStateOf("") }
     CenteredColumn(
         title = "Welcome",
         body = "Sign in with the Google account on this phone to open your household ledger.",
@@ -136,6 +151,40 @@ private fun SignInScreen(
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 12.dp),
+            )
+        }
+        OutlinedTextField(
+            value = note,
+            onValueChange = { note = it },
+            label = { Text("Google account used here (optional)") },
+            singleLine = true,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+        )
+        OutlinedButton(
+            onClick = { onSendDiagnostics(note.ifBlank { null }) },
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+        ) {
+            Text("Send diagnostics report")
+        }
+        if (!diagnosticsStatus.isNullOrBlank()) {
+            Text(
+                diagnosticsStatus,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+        if (!installId.isNullOrBlank()) {
+            Text(
+                "Device id: $installId",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
             )
         }
     }

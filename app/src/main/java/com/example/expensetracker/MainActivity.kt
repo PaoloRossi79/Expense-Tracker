@@ -33,6 +33,7 @@ class MainActivity : FragmentActivity() {
             ExpenseTrackerTheme {
                 val rootViewModel: RootViewModel = viewModel(factory = AppViewModelFactory)
                 val state by rootViewModel.state.collectAsStateWithLifecycle()
+                val diagnosticsStatus by rootViewModel.diagnosticsStatus.collectAsStateWithLifecycle()
 
                 when (val current = state) {
                     is RootState.Ready ->
@@ -46,10 +47,13 @@ class MainActivity : FragmentActivity() {
                     else ->
                         RootGate(
                             state = current,
+                            installId = rootViewModel.installId,
+                            diagnosticsStatus = diagnosticsStatus,
                             onSignIn = { rootViewModel.signIn(this@MainActivity) },
                             onUnlocked = rootViewModel::onUnlocked,
                             onSignOut = rootViewModel::signOut,
                             onRetry = rootViewModel::refreshMembership,
+                            onSendDiagnostics = rootViewModel::sendDiagnostics,
                         )
                 }
             }

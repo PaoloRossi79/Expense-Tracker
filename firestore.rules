@@ -83,5 +83,40 @@ service cloud.firestore {
         }
       }
     }
+
+    // Remote diagnostics uploaded by client devices (data/diagnostics).
+    //
+    // Writes require an authenticated identity: the app signs in with Google when
+    // it can and otherwise falls back to anonymous sign-in, so a device that
+    // cannot complete Google sign-in can still report why. The token is only a
+    // shape marker, never a credential. The payload is constrained to the
+    // expected fields and bounded sizes so this path cannot store arbitrary data.
+    //
+    // Reads are limited to members of this deployment's household. The household
+    // id is fixed at bootstrap (00-prerequisites.md §7) and is taken from this
+    // rule, not from the document, so a writer cannot target another household.
+    match /diagnostics/{docId} {
+      allow create: if request.auth != null
+        && request.resource.data.token == 'et-diag-v1'
+        && request.resource.data.schema == 'et-diag-v1'
+        && request.resource.data.installId is string
+        && request.resource.data.installId.size() <= 64
+        && request.resource.data.keys().hasOnly([
+             'schema', 'token', 'trigger', 'installId', 'createdAtClient',
+             'householdId', 'app', 'device', 'google', 'authConfig',
+             'authState', 'note', 'exception', 'createdAt'
+           ])
+        && request.resource.data.app.size() <= 12
+        && request.resource.data.device.size() <= 16
+        && request.resource.data.google.size() <= 6
+        && request.resource.data.authConfig.size() <= 6
+        && request.resource.data.authState.size() <= 5
+        && (!('note' in request.resource.data)
+            || request.resource.data.note.size() <= 2000)
+        && (!('exception' in request.resource.data)
+            || request.resource.data.exception.stackTrace.size() <= 8000);
+      allow read: if signedIn() && isMember('v5yZULI5S4ugLc7FFG6R');
+      allow update, delete: if false;
+    }
   }
 }

@@ -25,6 +25,15 @@ val hasGoogleServices = file("google-services.json").exists()
 val releaseKeystorePath = config("RELEASE_KEYSTORE_PATH")
 val hasReleaseKeystore = releaseKeystorePath.isNotEmpty() && file(releaseKeystorePath).exists()
 
+// Testers must be able to tell builds apart (every release used to share the
+// same versionCode/versionName, so nobody could say which build they had). CI
+// derives a unique, increasing versionCode from the run number and appends the
+// commit sha to versionName, which is what App Distribution displays.
+val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+val gitSha = System.getenv("GITHUB_SHA")?.take(7)
+val appVersionCode = ciRunNumber?.let { 100 + it } ?: 3
+val appVersionName = "1.0.0+" + (gitSha ?: "local")
+
 if (hasGoogleServices) {
     apply(plugin = "com.google.gms.google-services")
 }
@@ -37,8 +46,8 @@ android {
         applicationId = "com.paolorossi.expensetracker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

@@ -64,6 +64,7 @@ fun RootGate(
                 onSendDiagnostics = onSendDiagnostics,
             )
         is RootState.NotAMember -> NotAMemberScreen(state.email, onSignOut, onRetry)
+        is RootState.Failed -> FailureScreen(state.message, onSignOut, onRetry)
         RootState.Locked -> LockedScreen(onUnlocked = onUnlocked, onSignOut = onSignOut)
         is RootState.Ready -> LoadingBox()
     }
@@ -203,6 +204,25 @@ private fun NotAMemberScreen(
                 "from the Add Member screen, or check the household document in Firestore.",
     ) {
         OutlinedButton(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
+            Text("Retry")
+        }
+        TextButton(onClick = onSignOut) { Text("Sign out") }
+    }
+}
+
+@Composable
+private fun FailureScreen(
+    message: String,
+    onSignOut: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    CenteredColumn(
+        title = "Couldn't open your household",
+        body =
+            "$message\n\nThis is usually a permissions or connectivity problem. " +
+                "Retry, or sign out and back in.",
+    ) {
+        Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
             Text("Retry")
         }
         TextButton(onClick = onSignOut) { Text("Sign out") }

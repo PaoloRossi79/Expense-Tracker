@@ -6,9 +6,11 @@ import androidx.lifecycle.viewModelScope
 import com.paolorossi.expensetracker.data.ServiceLocator
 import com.paolorossi.expensetracker.data.auth.AuthUser
 import com.paolorossi.expensetracker.data.model.Household
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -21,6 +23,9 @@ sealed interface RootState {
     data class SignedOut(val error: String? = null) : RootState
 
     data class NotAMember(val email: String) : RootState
+
+    /** The household could not be read (permissions or network); recoverable. */
+    data class Failed(val message: String) : RootState
 
     data object Locked : RootState
 
@@ -38,6 +43,7 @@ class RootViewModel : ViewModel() {
     /** Stable per-install id, surfaced in the UI so a user can relay it. */
     val installId: String? get() = ServiceLocator.diagnosticsInstallId
 
+    private var authJob: Job? = null
     private var unlocked = false
     private var lastUser: AuthUser? = null
     private var lastHousehold: Household? = null
@@ -55,22 +61,34 @@ class RootViewModel : ViewModel() {
     }
 
     private fun observeAuth() {
-        viewModelScope.launch {
-            ServiceLocator.authRepository.observeAuthState().collectLatest { user ->
-                lastUser = user
-                if (user == null) {
-                    lastHousehold = null
-                    unlocked = false
-                    _state.value = RootState.SignedOut(lastError)
-                    return@collectLatest
-                }
-                ServiceLocator.householdRepository.observeHousehold(ServiceLocator.householdId)
-                    .collectLatest { household ->
-                        lastHousehold = household
-                        recompute()
+        authJob?.cancel()
+        authJob =
+            viewModelScope.launch {
+                ServiceLocator.authRepository.observeAuthState().collectLatest { user ->
+                    lastUser = user
+                    if (user == null) {
+                        lastHousehold = null
+                        unlocked = false
+                        _state.value = RootState.SignedOut(lastError)
+                        return@collectLatest
                     }
+                    ServiceLocator.householdRepository
+                        .observeHousehold(ServiceLocator.householdId)
+                        // A failed household read (permission denied, network)
+                        // must never take the app down: it used to escape as an
+                        // uncaught exception on the main thread. Report it and
+                        // show a recoverable error with Retry instead.
+                        .catch { failure ->
+                            lastHousehold = null
+                            recordFailure("household_listener_error", failure)
+                            _state.value = RootState.Failed(describe(failure))
+                        }
+                        .collectLatest { household ->
+                            lastHousehold = household
+                            recompute()
+                        }
+                }
             }
-        }
     }
 
     private fun recompute() {
@@ -93,7 +111,7 @@ class RootViewModel : ViewModel() {
             _state.value = RootState.Loading
             val result = ServiceLocator.authRepository.signInWithGoogle(activity)
             lastFailure = result.exceptionOrNull()
-            lastError = lastFailure?.message ?: lastFailure?.javaClass?.simpleName
+            lastError = lastFailure?.let(::describe)
             if (result.isFailure) {
                 _state.value = RootState.SignedOut(lastError)
                 // Cancelling the account picker is not a failure worth reporting.
@@ -134,6 +152,17 @@ class RootViewModel : ViewModel() {
         }
     }
 
+    /** Records a background failure so it is visible without crashing the app. */
+    private fun recordFailure(
+        trigger: String,
+        failure: Throwable,
+    ) {
+        val reporter = ServiceLocator.diagnosticsReporter ?: return
+        viewModelScope.launch { runCatching { reporter.send(failure, trigger, null) } }
+    }
+
+    private fun describe(failure: Throwable): String = failure.message ?: failure.javaClass.simpleName
+
     /** A cancelled account picker surfaces as an ordinary failure result. */
     private fun isUserCancellation(throwable: Throwable?): Boolean =
         throwable?.javaClass?.name?.contains("Cancel", ignoreCase = true) == true
@@ -144,8 +173,9 @@ class RootViewModel : ViewModel() {
         recompute()
     }
 
+    /** Re-subscribes to the household so a transient failure can recover. */
     fun refreshMembership() {
-        recompute()
+        if (ServiceLocator.isConfigured) observeAuth() else recompute()
     }
 
     fun signOut() {

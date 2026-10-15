@@ -1,308 +1,325 @@
 # AGENTS.md
 
-Instructions for AI coding agents working in this Android repository. Read this file fully before making changes. When these rules conflict with a quick fix, follow the rules and explain the trade-off in your summary.
+Rules for AI coding agents working on this native Android (Kotlin) codebase. Read this file before changing anything. Where the existing code disagrees with this file, apply these rules to new and modified code, and report the mismatch rather than rewriting unrelated code.
 
 ---
 
-## 1. Project Overview
+## 0. Quick Reference
 
-- **Platform:** Native Android, Kotlin only (no Java in new code).
-- **Min SDK / Target SDK:** defined in `gradle/libs.versions.toml`. Do not lower minSdk without approval.
-- **UI:** Jetpack Compose with Material 3. XML layouts are legacy; do not add new ones.
-- **Architecture:** Clean Architecture with feature modules, unidirectional data flow (UDF), MVI-style ViewModels.
-- **DI:** Hilt (or Koin if the project already uses it; do not mix).
-- **Async:** Kotlin Coroutines and Flow. No RxJava in new code. No `GlobalScope`.
-- **Persistence:** Room for structured data, DataStore for preferences. No SharedPreferences in new code.
-- **Networking:** Retrofit + OkHttp + kotlinx.serialization (or Moshi, per the project's existing choice).
+| Task | Command |
+|---|---|
+| Build everything | `./gradlew assembleDebug` |
+| Unit tests (JVM) | `./gradlew testDebugUnitTest` |
+| Instrumented + UI tests | `./gradlew connectedDebugAndroidTest` |
+| Format | `./gradlew ktlintFormat` |
+| Static analysis | `./gradlew detekt ktlintCheck lintDebug` |
+| Coverage gate | `./gradlew koverVerify` (or `jacocoTestCoverageVerification`) |
+| Dependency vulnerabilities | `./gradlew dependencyCheckAnalyze` |
 
-If something here contradicts the actual codebase, ask before "fixing" existing code to match these rules. Apply these rules to all new code.
+Run format, static analysis, unit tests, and the coverage gate before reporting any task as done. Run instrumented tests whenever you touched Room, navigation, or Compose UI, and say clearly if no emulator was available.
+
+### Boundaries
+
+**Always**
+- Read the module, its tests, and neighbouring code before writing.
+- Add or update tests in the same change as the code.
+- Keep changes small and scoped to the task.
+
+**Ask first**
+- Adding or upgrading a dependency, changing module boundaries, changing the database schema, changing navigation structure, changing minSdk/targetSdk, touching ProGuard/R8 rules, signing, or CI config.
+
+**Never**
+- Commit secrets, keystores, `google-services.json` with real credentials, or tokens.
+- Disable or loosen lint, detekt, tests, coverage thresholds, certificate pinning, or network security config to make something pass.
+- Use `!!`, `GlobalScope`, `runBlocking` in production code, or `Thread.sleep` in tests.
+- Invent library APIs. Check the version in the version catalog and the real documentation.
 
 ---
 
-## 2. Build, Run, and Verify Commands
+## 1. Stack
 
-Run these before declaring any task complete:
+- **Language:** Kotlin (no new Java). Kotlin explicit API mode for library modules.
+- **UI:** Jetpack Compose + Material 3. No new XML layouts.
+- **Architecture:** Clean Architecture, feature modules, unidirectional data flow.
+- **DI:** Hilt. Do not mix DI frameworks.
+- **Async:** Coroutines + Flow. No RxJava in new code.
+- **Local data:** Room (structured), DataStore (preferences). No new SharedPreferences.
+- **Network:** Retrofit + OkHttp + kotlinx.serialization.
+- **Build:** Gradle Kotlin DSL, version catalog (`gradle/libs.versions.toml`), convention plugins in `build-logic/`.
+- **Static analysis:** ktlint, detekt, Android Lint, all warnings treated as errors for new code.
 
-```bash
-./gradlew clean build                      # compile all modules, run lint
-./gradlew test                             # unit tests (JVM)
-./gradlew connectedAndroidTest             # instrumented + UI tests (needs emulator/device)
-./gradlew detekt ktlintCheck               # static analysis and formatting
-./gradlew jacocoTestCoverageVerification   # enforce coverage thresholds
-./gradlew lintRelease                      # Android Lint on release variant
+If the repo uses a different library for any of these, follow the repo and tell me.
+
+---
+
+## 2. Project Structure
+
 ```
-
-- Never mark a task done if any of these fail for code you touched.
-- Do not disable lint rules, detekt rules, or tests to make a build pass. If a rule is a false positive, add a narrowly scoped suppression with a comment explaining why.
-- Do not edit `gradle/libs.versions.toml` or add dependencies without stating the reason in your summary.
-
----
-
-## 3. Module Structure and Dependency Rules
-
-```
-app/                      -> composition root, navigation host, DI wiring
+app/                         composition root: Application, MainActivity, nav host, DI wiring
+build-logic/                 convention plugins (shared Gradle config)
 core/
-  common/                 -> Result types, dispatchers, extensions (no Android deps where possible)
-  designsystem/           -> theme, reusable Compose components
-  network/                -> HTTP client setup, interceptors, error mapping
-  database/               -> Room database, DAOs, migrations
-  testing/                -> shared test fixtures, rules, fakes
+  common/                    pure Kotlin utilities, Result/Error types, dispatcher provider
+  designsystem/              theme, typography, reusable composables
+  network/                   OkHttp/Retrofit setup, interceptors, error mapping
+  database/                  Room database, DAOs, migrations
+  security/                  Keystore, encryption, token storage
+  testing/                   fakes, builders, rules, test dispatchers
 feature/<name>/
-  data/                   -> repository impls, data sources, DTOs, mappers
-  domain/                 -> entities, use cases, repository interfaces (pure Kotlin)
-  presentation/           -> ViewModels, UI state, UI events, Compose screens
+  domain/                    models, repository interfaces, use cases (pure Kotlin)
+  data/                      repository impls, remote/local sources, DTOs, mappers
+  presentation/              ViewModel, UiState/Event/Effect, composables
 ```
 
-**Dependency rules (enforced; violations fail review):**
+### Dependency rules
 
-1. `domain` depends on nothing Android-specific. Pure Kotlin/JVM only.
-2. `data` depends on `domain`. It never depends on `presentation`.
-3. `presentation` depends on `domain`. It never touches `data` classes directly.
-4. Features do not depend on other features. Share through `core/*` or through navigation contracts.
-5. Only `app` knows every module.
-6. Use a dependency-rule check (for example, a Gradle task or a Konsist test) to enforce these boundaries in CI.
-
----
-
-## 4. Clean Code Standards
-
-### Naming and structure
-- Classes and functions read as intent: `GetOrdersForUserUseCase`, not `Helper` or `Manager`.
-- One public top-level class per file. File name matches the class.
-- Functions do one thing. Aim for under 20 lines; split when a function needs a comment to explain a block.
-- Maximum 3 levels of nesting. Use early returns (`?: return`, `if (x == null) return`).
-- Prefer `val` over `var`. Prefer immutable collections exposed from public APIs.
-- No magic numbers or strings. Use named constants or resources.
-- No commented-out code. Delete it; git keeps history.
-- No `!!` in production code. Use safe calls, `requireNotNull` with a message, or model the absence in the type system.
-- No `TODO` without a ticket reference, for example `// TODO(PROJ-123): ...`.
-
-### Kotlin idioms
-- Use `sealed interface` / `sealed class` for state and results, not nullable flags.
-- Use `data class` for models, `value class` for type-safe IDs and units.
-- Use `when` exhaustively on sealed types. Do not add `else` branches that hide new cases.
-- Use extension functions for mapping (`toDomain()`, `toEntity()`), kept in the mapper file for that layer.
-- Prefer `Result`-style wrappers from `core/common` over throwing across layer boundaries.
-
-### Formatting and static analysis
-- Formatting: ktlint with the official Kotlin code style. Run `ktlintFormat` before committing.
-- Static analysis: detekt with the project's `detekt.yml`. Zero new issues allowed.
-- Lint: Android Lint must pass with no new warnings in changed files.
+1. `domain` has no Android or framework dependencies.
+2. `data` depends on `domain`. `presentation` depends on `domain`. Neither depends on the other.
+3. Features never depend on other features. Share code via `core/*`, or define a navigation contract.
+4. `app` is the only module that sees everything.
+5. Enforce this in CI with an architecture test (for example Konsist) or a Gradle dependency check. If it does not exist yet, propose adding it.
 
 ---
 
-## 5. Architecture Patterns
+## 3. Clean Code Rules
 
-### Presentation layer (MVI-style)
+### Design principles
+- SOLID, with emphasis on single responsibility and dependency inversion.
+- Prefer composition over inheritance. Prefer small, focused types.
+- Make illegal states unrepresentable: model state with sealed types and value classes, not nullable flags and booleans.
+- Depend on abstractions at layer boundaries; inject everything that has side effects (dispatchers, clocks, random, I/O).
+
+### Code style
+- Names express intent: `ObserveCartTotalUseCase`, not `CartHelper`.
+- Functions do one thing, usually under 20 lines, at most 3 levels of nesting, early returns.
+- Maximum 4 parameters; otherwise introduce a parameter object.
+- No magic values; use named constants or resources.
+- Comments explain why, not what. No commented-out code.
+- `TODO` requires a ticket: `// TODO(PROJ-123): ...`.
+- KDoc on all public APIs of `core/*` modules.
+
+### Kotlin practices
+- `val` over `var`; immutable collections in public APIs.
+- `data class` for models, `value class` for IDs and units, `sealed interface` for closed hierarchies.
+- Exhaustive `when` on sealed types, with no catch-all `else` that hides new cases.
+- Extension functions for mappers (`toDomain()`, `toEntity()`), one mapper file per boundary.
+- Never swallow `CancellationException`; rethrow it in any broad `catch`.
+- Expose failures as typed results (`sealed interface Outcome<out T>`) across layers rather than throwing.
+
+---
+
+## 4. Architecture Patterns
+
+### Presentation (MVI)
 ```kotlin
-data class OrdersUiState(
+@Immutable
+data class CartUiState(
     val isLoading: Boolean = false,
-    val orders: List<OrderUi> = emptyList(),
+    val items: List<CartItemUi> = emptyList(),
     val error: UiText? = null,
 )
 
-sealed interface OrdersEvent {
-    data object Refresh : OrdersEvent
-    data class OrderClicked(val id: OrderId) : OrdersEvent
+sealed interface CartEvent {
+    data object Refresh : CartEvent
+    data class RemoveItem(val id: ItemId) : CartEvent
 }
 
-sealed interface OrdersEffect {  // one-shot side effects (navigation, snackbars)
-    data class NavigateToDetail(val id: OrderId) : OrdersEffect
+sealed interface CartEffect {
+    data class ShowMessage(val text: UiText) : CartEffect
 }
 ```
 
-- ViewModels expose a single `StateFlow<UiState>` and a `Channel`/`SharedFlow` for effects.
-- ViewModels take `UseCase`s, never repositories or data sources.
-- ViewModels contain no `Context`, `View`, or Android framework references. Use `UiText` for localized strings.
-- Compose screens are stateless: they take `state` and `onEvent` parameters. Hoist state.
-- Collect flows with `collectAsStateWithLifecycle()`, never `collectAsState()`.
+- One `StateFlow<UiState>` per screen. One-shot effects through a `Channel` exposed as `Flow`.
+- ViewModels depend on use cases only. No `Context`, `Resources`, or views inside ViewModels; use `UiText`.
+- Composables are stateless: `Screen(state, onEvent)`. Hoist state. Provide `@Preview`s for key states.
+- Collect with `collectAsStateWithLifecycle()`.
+- Use stable keys in lazy lists.
 
-### Domain layer
-- Use cases are single-purpose: one `operator fun invoke`.
-- Repository interfaces live in `domain`. Implementations live in `data`.
-- Domain models are not annotated with serialization or Room annotations.
+### Domain
+- A use case does one thing, exposed as `operator fun invoke`.
+- Business rules live here, not in ViewModels or repositories.
+- No serialization or Room annotations on domain models.
 
-### Data layer
-- Repositories map DTOs and entities to domain models at the boundary.
-- Single source of truth: Room is the cache; the UI observes the database, and network refreshes write into it.
-- Expose `Flow` for reactive data. Use `suspend` for one-shot operations.
+### Data
+- Single source of truth: Room. The UI observes the database; network results write to it.
+- Repositories map DTO/entity to domain at the boundary. DTOs never leave `data`.
+- Handle offline, timeout, and server errors explicitly and map them to domain errors.
 
-### Coroutines
-- Inject `CoroutineDispatcher`s. Never hardcode `Dispatchers.IO` in classes under test.
-- Use `viewModelScope` in ViewModels, `repeatOnLifecycle` in UI.
-- Never swallow `CancellationException`. Rethrow it in every `catch`.
-- Structured concurrency only. No fire-and-forget scopes.
+### Concurrency
+- Inject `DispatcherProvider`; never hardcode `Dispatchers.IO` in testable classes.
+- Structured concurrency only. Scopes are owned by a lifecycle (`viewModelScope`, `lifecycleScope` with `repeatOnLifecycle`).
+- Main-safe suspend functions: callers should not need to switch dispatchers.
 
 ### Navigation
-- Type-safe navigation with the Navigation Compose APIs. Routes are defined in the feature's `presentation` or a shared contract module.
-- Features expose entry points, not internal screens.
+- Type-safe Navigation Compose. Each feature exposes a navigation entry point; internal screens stay internal.
 
 ---
 
-## 6. Testing Requirements
+## 5. Testing Standards
 
-Coverage is a floor, not a goal. Tests must assert behaviour, not implementation details.
+Tests verify behaviour. Coverage numbers are a safety net, not the goal.
 
-### Coverage targets (enforced by Jacoco in CI)
-| Layer | Line coverage | Branch coverage |
+### Test pyramid and tools
+
+| Level | Where | Tools |
 |---|---|---|
-| `domain` (use cases, models) | >= 90% | >= 85% |
-| `data` (repositories, mappers) | >= 85% | >= 80% |
-| `presentation` (ViewModels) | >= 85% | >= 80% |
-| `core/*` | >= 80% | >= 75% |
-| Overall | >= 80% | >= 75% |
+| Unit | `src/test` | JUnit 5, MockK, Turbine, kotlinx-coroutines-test, Truth or AssertK |
+| Integration (JVM) | `src/test` | Robolectric, MockWebServer, in-memory Room |
+| Integration (device) | `src/androidTest` | AndroidX Test, Room `MigrationTestHelper`, Hilt testing |
+| UI | `src/androidTest` (and Robolectric where fast enough) | Compose UI test (`createComposeRule`), Hilt test rules |
 
-Do not write tests solely to hit numbers. Coverage shows what ran, not what was verified.
+Note: instrumented tests use JUnit 4 runners. Do not assume JUnit 5 in `androidTest`.
 
-### Unit tests (`src/test`, JVM)
-- Frameworks: JUnit 5, MockK, Turbine (for Flow), kotlinx-coroutines-test.
-- Name tests as sentences: `fun 'returns empty list when repository fails'()` (backtick names are allowed in tests).
-- Structure: Arrange / Act / Assert, with blank lines between sections.
-- Use `StandardTestDispatcher` / `runTest`. Never `Thread.sleep`.
-- Test ViewModels by asserting the sequence of emitted `UiState`s with Turbine.
-- Prefer fakes over mocks for repositories. Use MockK for collaborators where a fake is impractical.
-- One logical assertion per test where practical.
-- Cover: happy path, error path, empty state, boundary values, and cancellation.
+### Coverage thresholds (enforced in CI)
 
-### Integration tests (`src/androidTest` or `src/test` with Robolectric)
-- Room DAOs: test against an in-memory database. Cover every query and every migration (use `MigrationTestHelper`).
-- Repositories: wire real data sources against a fake HTTP server (MockWebServer) and an in-memory Room database. Verify the full path from network response to domain model.
-- Retrofit services: contract tests against recorded JSON fixtures in `src/test/resources`.
-- DataStore: test read/write round trips with a temporary file.
+| Scope | Line | Branch |
+|---|---|---|
+| `domain` | 90% | 85% |
+| `data` | 85% | 80% |
+| ViewModels | 85% | 80% |
+| `core/*` | 80% | 75% |
+| Project overall | 80% | 75% |
 
-### UI tests (`src/androidTest`)
-- Compose UI tests with `createComposeRule()`. Use `testTag` for stable selectors; do not match on display text alone when it can change.
-- Test the screen with a fake ViewModel or a fake state, not the real network.
-- End-to-end flows (login, purchase, navigation across screens) use a `HiltTestApplication` with test modules replacing network and database bindings.
-- Use Espresso only for legacy View-based code; do not introduce new Espresso tests for Compose.
-- Run UI tests on at least one API level at the project's minSdk and one at targetSdk.
-- Consider Maestro or similar for black-box flow tests in CI, if the project has the infrastructure.
+Coverage must not decrease in any module you touch. Excluded from coverage: generated code (Hilt, Room, serialization), `@Preview` functions, and pure DI modules.
 
-### Test doubles and fixtures
-- Shared fixtures live in `core/testing`. Build fixtures with builder functions, for example `anOrder(id = ..., status = ...)`.
-- Do not share mutable state between tests. Reset rules run in `@Before`/`@After`.
-- Keep test data realistic. Use the same value shapes as production.
+### Unit tests
+- Naming: behaviour as a sentence, for example `` `emits error state when refresh fails` ``.
+- Arrange / Act / Assert, separated by blank lines.
+- Use `runTest` with an injected `TestDispatcher`. Test ViewModels by asserting the sequence of `UiState`s with Turbine.
+- Prefer hand-written fakes over mocks for repositories; use MockK for the rest.
+- Cover happy path, error path, empty input, boundaries, and cancellation.
+- Tests are deterministic: no real clocks, network, or randomness.
+- Bug fixes begin with a failing test that reproduces the bug.
 
-### Definition of done for a feature
-- [ ] Unit tests for every use case and ViewModel branch
-- [ ] Integration test for every repository and DAO touched
-- [ ] UI test for each new screen's primary interaction
-- [ ] No drop in coverage for touched modules
-- [ ] `./gradlew test connectedAndroidTest detekt ktlintCheck` passes
+### Integration tests
+- **DAOs:** real Room against an in-memory database; every query is exercised.
+- **Migrations:** every schema migration tested with `MigrationTestHelper` using exported schemas.
+- **Repositories:** real data sources over MockWebServer + in-memory Room, verifying network to database to domain end to end, including error and offline paths.
+- **API contracts:** parse recorded JSON fixtures from `src/test/resources`, including unknown fields and missing optional fields.
+- **DataStore / Keystore wrappers:** verify read, write, and corruption handling.
 
----
+### UI tests
+- Select nodes by `testTag` or semantics, not by changeable display text.
+- Screen-level tests render a composable with fixed `UiState` and assert on output and emitted events.
+- Flow-level tests (for example sign-in to home) run with `HiltAndroidTest` and replace network and database bindings with test modules.
+- Verify accessibility semantics (content descriptions, roles, touch target size) in screen tests.
+- Run on the minSdk API level and the targetSdk API level. Keep flaky tests out of the main suite: fix or quarantine with a ticket.
+- Use screenshot tests (Paparazzi, Roborazzi, or the AGP screenshot testing plugin) for design-system components if the project has them set up.
 
-## 7. Security Standards
-
-Follow OWASP MASVS (Level 1 minimum, Level 2 for apps handling payments, health, or identity data) and the Android security guidance.
-
-### Data at rest
-- Never store secrets, tokens, or PII in plaintext SharedPreferences, files, or logs.
-- Use Android Keystore-backed encryption for sensitive values (for example, `EncryptedDataStore` or a Keystore-wrapped key).
-- Room databases holding sensitive data must be encrypted (SQLCipher or equivalent) with the key held in the Keystore.
-- Do not write sensitive data to external storage or the clipboard without user action and an expiry.
-
-### Data in transit
-- HTTPS only. Set `android:usesCleartextTraffic="false"` and use a `network_security_config.xml`.
-- Enable certificate pinning for the production API domain, with a documented backup pin and rotation plan.
-- Never disable hostname verification or trust all certificates, including in debug builds.
-
-### Authentication and secrets
-- Tokens: store in the Keystore-backed store. Refresh tokens must not be stored alongside access tokens in plaintext.
-- No API keys, client secrets, or signing keys in source control. Use `local.properties` (git-ignored) or CI secrets injected at build time.
-- Use `BuildConfig` only for non-secret configuration.
-- Use the platform biometric and credential APIs (`BiometricPrompt`, Credential Manager) for sign-in flows.
-
-### Application hardening
-- Release builds: R8 enabled, `isMinifyEnabled = true`, `isShrinkResources = true`. Keep rules minimal and reviewed.
-- `android:debuggable="false"` in release. `android:allowBackup="false"` unless backups are designed and reviewed.
-- Export only the components that must be exported. Default to `exported="false"`.
-- Validate every intent extra and deep-link parameter. Treat all external input as untrusted.
-- Use `FileProvider` for file sharing; never expose `file://` URIs.
-- WebViews: disable JavaScript unless required; never use `addJavascriptInterface` with untrusted content.
-- Enable Play Integrity checks for flows where client trust matters.
-
-### Logging and analytics
-- No PII, tokens, or full request/response bodies in logs. Use Timber or a wrapper that strips log output in release.
-- Analytics events must not include PII. Document any new event in the analytics catalogue.
-
-### Dependencies
-- Every new dependency needs a justification in the PR description: why it is needed, its maintenance status, and its license.
-- Enable Dependabot or Renovate. Keep dependencies within one minor version of latest where practical.
-- Run dependency vulnerability scanning (for example, OWASP Dependency-Check or GitHub Dependabot alerts) in CI.
-
-### Code-level rules
-- Validate all user input at the domain boundary.
-- Use parameterised queries in Room (`:param`). Never concatenate strings into SQL.
-- Do not use `Random` for security-sensitive values; use `SecureRandom`.
-- Do not use `MD5` or `SHA-1` for security purposes.
-- Set timeouts on every network call.
+### Definition of done for tests
+- [ ] Unit tests for all new use cases, mappers, and ViewModel branches
+- [ ] Integration tests for every touched repository, DAO, or API contract
+- [ ] UI test for every new screen's main path and one error path
+- [ ] All tests pass locally and in CI; no skipped tests without a ticket
+- [ ] Coverage thresholds met
 
 ---
 
-## 8. Performance and Quality
+## 6. Security Standards
 
-- No work on the main thread. Use StrictMode in debug builds to catch violations.
-- Avoid recomposition: use `remember`, stable types, and `derivedStateOf` where profiling shows need. Do not optimise without measuring.
-- Lazy lists use stable keys (`items(key = ...)`).
-- Images load through a single image library (Coil), with sizing and caching configured in `core/network` or `core/designsystem`.
-- Avoid memory leaks: no static references to `Context` or `Activity`.
-- Use Baseline Profiles for startup-critical paths.
-- Large changes to hot paths must include a benchmark or a trace comparison.
+Baseline: OWASP MASVS Level 1; Level 2 and the OWASP MASTG test cases for anything handling payments, identity, health, or other regulated data. Follow GDPR/UK GDPR principles for personal data (minimisation, purpose limitation, retention).
+
+### Storage
+- No tokens, secrets, or personal data in plaintext (preferences, files, logs, cache, crash reports).
+- Use Android Keystore-backed keys. For encrypting stored values use an AEAD approach (for example Tink with a Keystore master key). Do not add new uses of the deprecated Jetpack Security `EncryptedSharedPreferences`/`EncryptedFile`.
+- Encrypt Room databases that hold sensitive data (for example SQLCipher), with the key protected by the Keystore.
+- Keep sensitive data off external storage and out of backups: `allowBackup="false"` or explicit `dataExtractionRules`/`fullBackupContent` exclusions.
+- Clear sensitive data on logout. Mark sensitive screens with `FLAG_SECURE` where appropriate.
+
+### Network
+- HTTPS only. `usesCleartextTraffic="false"` and a reviewed `network_security_config.xml`.
+- Certificate pinning for first-party API hosts, with a backup pin and a documented rotation procedure.
+- Never install a trust-all `TrustManager` or disable hostname verification, in any build type.
+- Timeouts on every call. Retry only idempotent requests, with backoff.
+- Do not log request or response bodies or headers containing credentials.
+
+### Authentication and authorization
+- OAuth 2.0 / OIDC with PKCE via a vetted library (for example AppAuth). No custom crypto or custom auth protocols.
+- Use Credential Manager for sign-in and `BiometricPrompt` (with crypto-bound keys for sensitive actions).
+- Short-lived access tokens; refresh tokens stored encrypted. Authorization decisions are enforced on the server; the client is never the sole control.
+
+### Secrets and configuration
+- No secrets in source, `BuildConfig`, resources, or the repo history. Inject via CI secret store. Treat anything shipped in the APK as public.
+- Signing keys and keystores are never committed. Use Play App Signing.
+
+### Component and input hardening
+- Components default to `android:exported="false"`; export only when required, with permissions or signature checks.
+- Use explicit intents, and immutable `PendingIntent`s (`FLAG_IMMUTABLE`).
+- Validate and sanitise all external input: intent extras, deep links, App Links, clipboard, file content. Prefer verified App Links over custom URL schemes.
+- Share files via `FileProvider`. Avoid `file://` URIs and broad storage permissions.
+- WebView: JavaScript off by default, no `addJavascriptInterface` for untrusted content, restrict navigation to an allowlist, disable file access.
+- Room and any SQL use parameterised queries only.
+- Request the minimum permissions, at the moment they are needed.
+
+### Release hardening
+- R8 minification and resource shrinking on in release; `debuggable=false`.
+- Consider Play Integrity API for flows where device or app integrity matters, verified server-side.
+- Strip logging in release (Timber tree that does nothing, or R8 log removal).
+
+### Supply chain
+- New dependencies need justification: purpose, maintenance activity, license, and known vulnerabilities.
+- Pin versions in the catalog. Enable Dependabot or Renovate and a vulnerability scan in CI.
+- Prefer AndroidX, Google, and Kotlin-team libraries where they fit.
+
+### Secure coding checks
+- `SecureRandom` for security-sensitive values; no MD5/SHA-1 for security; no ECB mode; no hardcoded IVs or keys.
+- Secrets in memory: avoid keeping them in `String` longer than needed where practical.
+- Run static security checks (detekt security rules, Android Lint security checks) and fix findings; do not suppress without a comment and a reviewer.
 
 ---
 
-## 9. Accessibility and Localization
+## 7. Performance, Accessibility, Localization
 
-- Every interactive element has a content description or a visible label.
-- Touch targets are at least 48dp.
-- Text scales with system font size; do not use fixed `sp` values that break at 200%.
-- Colour is never the only signal for meaning.
-- All user-facing strings live in `strings.xml` (or the Compose resource equivalent). No hardcoded text in Kotlin.
-- Use plurals and format arguments correctly; never concatenate strings for translation.
-- Include TalkBack-navigable semantics. Test with the Accessibility Scanner before merging UI changes.
+**Performance**
+- Nothing blocking on the main thread; StrictMode enabled in debug.
+- Measure before optimising: Macrobenchmark for startup and scrolling, Perfetto/Layout Inspector for investigation.
+- Compose: stable or `@Immutable` state, `remember`/`derivedStateOf` where profiling justifies it, lambda stability, no heavy work in composition.
+- Ship Baseline Profiles for startup and critical journeys.
+- Single image-loading library (Coil) with sensible caching and downsampling.
+- No `Context` or `Activity` references retained in singletons or ViewModels.
 
----
+**Accessibility**
+- Content descriptions for meaningful icons and images; labels for all inputs.
+- Touch targets at least 48dp; support font scale up to 200%.
+- Meaning is never conveyed by colour alone; meet WCAG AA contrast.
+- Verify with TalkBack and the Accessibility Scanner.
 
-## 10. Git and Pull Request Conventions
-
-- Branch names: `feature/<ticket>-short-description`, `fix/<ticket>-short-description`.
-- Commits: Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`). One logical change per commit.
-- PRs must include:
-  - Summary of what changed and why
-  - Screenshots or screen recordings for UI changes
-  - Test evidence (what was added, what the coverage delta is)
-  - Security impact, if any
-  - Any new dependency and its justification
-- Keep PRs under about 400 changed lines where possible. Split larger work.
-- Do not force-push to shared branches. Do not commit generated files, build outputs, or IDE configs.
+**Localization**
+- All user-visible strings in resources; no hardcoded text. Use plurals and format arguments, never string concatenation.
+- Support RTL layouts. Format dates, numbers, and currency with locale-aware APIs.
 
 ---
 
-## 11. Working Agreement for AI Agents
+## 8. Git, Review, and CI
 
-1. **Read before writing.** Inspect the surrounding module, its tests, and existing patterns before adding code. Match the conventions you find, unless they violate this file.
-2. **Smallest correct change.** Do not refactor unrelated code in the same change. If you find a problem outside the task, report it rather than fixing it silently.
-3. **Tests come with code.** A change without tests is incomplete. A bug fix must include a test that fails before the fix and passes after.
-4. **Ask when unsure about architecture.** Module boundaries, new libraries, navigation changes, and data model changes need human sign-off.
-5. **Never weaken security or tests to make something pass.** If a check fails, fix the cause.
-6. **Never invent APIs.** Verify library APIs against the version in `libs.versions.toml` before using them.
-7. **Report honestly.** In your summary, state what you ran, what passed, what you could not run (for example, no emulator available), and any known gaps.
-8. **Keep secrets out of output.** Do not print tokens, keys, or personal data in logs, commits, or chat.
+- Branches: `feature/<ticket>-short-name`, `fix/<ticket>-short-name`.
+- Commits follow Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`).
+- Keep PRs small (about 400 changed lines or fewer) and single-purpose.
+- A PR description contains: what and why, test evidence, screenshots or recordings for UI changes, security or privacy impact, and new dependencies with justification.
+- CI must pass before merge: build, ktlint, detekt, lint, unit tests, instrumented tests, coverage gate, vulnerability scan.
+- Never force-push shared branches. Do not commit build outputs or IDE files.
 
 ---
 
-## 12. Definition of Done (Summary)
+## 9. How the Agent Should Work
 
-A task is complete only when:
+1. **Understand first.** Read the relevant module, existing tests, and similar features. Match established patterns that comply with this file.
+2. **Plan briefly for non-trivial work.** State the approach and any assumption in a few lines before large edits.
+3. **Make the smallest correct change.** Report unrelated problems you notice instead of fixing them silently.
+4. **Write the test with the code.** For a bug, write the failing test first.
+5. **Verify.** Run the commands in section 0 for what you changed.
+6. **Report honestly.** Your final summary lists: what changed and why, which commands you ran and their results, what you could not run, known gaps, and any decisions that need human review.
+7. **Protect sensitive data.** Never print or commit secrets, tokens, or personal data, including in test fixtures. Use obviously fake values.
 
-- [ ] Code follows the module and dependency rules in section 3
-- [ ] Clean code and Kotlin idioms in section 4 are followed
-- [ ] Unit, integration, and UI tests exist for the change, and pass
-- [ ] Coverage thresholds in section 6 are met for touched modules
-- [ ] `detekt`, `ktlintCheck`, and Android Lint pass
-- [ ] Security rules in section 7 are respected, with no new secrets, cleartext traffic, or PII in logs
-- [ ] Accessibility and localization rules in section 9 are respected for UI changes
-- [ ] PR follows section 10 and includes test and security notes
-- [ ] Summary to the user states what was verified and what was not
+---
+
+## 10. Final Checklist
+
+- [ ] Architecture and dependency rules respected (section 2)
+- [ ] Clean code and Kotlin rules followed (section 3)
+- [ ] MVI/UDF patterns and coroutine rules followed (section 4)
+- [ ] Unit, integration, and UI tests added and passing; coverage thresholds met (section 5)
+- [ ] No security rule violated; no new secrets, cleartext traffic, or PII in logs (section 6)
+- [ ] Accessibility and localization checked for UI changes (section 7)
+- [ ] ktlint, detekt, and Android Lint clean
+- [ ] PR description complete (section 8)
+- [ ] Summary states what was verified and what was not (section 9)

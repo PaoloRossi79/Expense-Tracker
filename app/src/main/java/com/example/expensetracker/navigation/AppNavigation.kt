@@ -72,12 +72,8 @@ fun AppNavigation(
         }
 
     fun navigateTo(route: String) {
-        val isAddRoute = route == Routes.ADD_EXPENSE || route == Routes.ADD_INCOME
         navController.navigate(route) {
-            if (!isAddRoute) {
-                popUpTo(Routes.HOME) { saveState = true }
-                launchSingleTop = true
-            }
+            popUpTo(Routes.HOME) { saveState = true }
             restoreState = true
         }
     }
@@ -152,13 +148,9 @@ fun AppNavigation(
                 )
             }
             composable(
-                route = Routes.ADD,
+                route = "add/expense",
                 arguments =
                     listOf(
-                        navArgument("type") {
-                            type = NavType.StringType
-                            defaultValue = "expense"
-                        },
                         navArgument("transactionId") {
                             type = NavType.StringType
                             defaultValue = ""
@@ -173,12 +165,42 @@ fun AppNavigation(
                         },
                     ),
             ) { entry ->
-                val type =
-                    if (entry.arguments?.getString("type") == "income") {
-                        TransactionType.INCOME
-                    } else {
-                        TransactionType.EXPENSE
-                    }
+                val type = TransactionType.EXPENSE
+                val transactionId = entry.arguments?.getString("transactionId").orEmpty().ifBlank { null }
+                val ruleId = entry.arguments?.getString("ruleId").orEmpty().ifBlank { null }
+                val dueDate =
+                    entry.arguments?.getString("dueDate").orEmpty().ifBlank { null }
+                        ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+
+                AddTransactionScreen(
+                    type = type,
+                    transactionId = transactionId,
+                    recurringRuleId = ruleId,
+                    dueDate = dueDate,
+                    onDone = { navController.popBackStack() },
+                    onBack = { navController.popBackStack() },
+                    viewModel = viewModel(factory = AppViewModelFactory),
+                )
+            }
+            composable(
+                route = "add/income",
+                arguments =
+                    listOf(
+                        navArgument("transactionId") {
+                            type = NavType.StringType
+                            defaultValue = ""
+                        },
+                        navArgument("ruleId") {
+                            type = NavType.StringType
+                            defaultValue = ""
+                        },
+                        navArgument("dueDate") {
+                            type = NavType.StringType
+                            defaultValue = ""
+                        },
+                    ),
+            ) { entry ->
+                val type = TransactionType.INCOME
                 val transactionId = entry.arguments?.getString("transactionId").orEmpty().ifBlank { null }
                 val ruleId = entry.arguments?.getString("ruleId").orEmpty().ifBlank { null }
                 val dueDate =

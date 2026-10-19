@@ -44,7 +44,7 @@ class RootViewModel : ViewModel() {
     val installId: String? get() = ServiceLocator.diagnosticsInstallId
 
     private var authJob: Job? = null
-    private var unlocked = false
+    private var unlocked = true
     private var lastUser: AuthUser? = null
     private var lastHousehold: Household? = null
     private var lastError: String? = null
@@ -72,6 +72,7 @@ class RootViewModel : ViewModel() {
                         _state.value = RootState.SignedOut(lastError)
                         return@collectLatest
                     }
+                    unlocked = true
                     ServiceLocator.householdRepository
                         .observeHousehold(ServiceLocator.householdId)
                         // A failed household read (permission denied, network)

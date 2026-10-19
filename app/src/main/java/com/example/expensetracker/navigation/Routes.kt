@@ -11,16 +11,16 @@ object Routes {
     const val MEMBERS = "members"
 
     const val ADD = "add?type={type}&transactionId={transactionId}&ruleId={ruleId}&dueDate={dueDate}"
-    const val ADD_EXPENSE = "add?type=expense"
-    const val ADD_INCOME = "add?type=income"
+    const val ADD_EXPENSE = "expense-entry"
+    const val ADD_INCOME = "add-income"
 
     fun edit(
         transactionId: String,
         type: TransactionType,
-    ): String = "add?type=${type.name.lowercase()}&transactionId=$transactionId"
+    ): String = "add/${type.name.lowercase()}&transactionId=$transactionId"
 
     fun confirmRecurring(
         ruleId: String,
         dueDate: String,
-    ): String = "add?type=expense&ruleId=$ruleId&dueDate=$dueDate"
+    ): String = "add/expense&ruleId=$ruleId&dueDate=$dueDate"
 }

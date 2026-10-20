@@ -96,3 +96,19 @@ The agent appends one entry per finished step, newest at the bottom. Do not rewr
   - Manual acceptance test 1-6 (seeded `Tesco`/`Costa Coffee`, editing/deleting a category) was not run; it needs the Firestore emulator/data and a signed-in account. The automated screen test covers typing `Te` -> tap `Tesco` -> `Groceries`.
 - Status: DONE
 
+### 2026-10-20 TASK_02B acceptance test 1-6 - Run on Firestore emulator + Pixel_API_36
+- Files changed: `local.properties` only (machine-specific, uncommitted): `USE_FIRESTORE_EMULATOR=true` (was `false`) so the app talks to `10.0.2.2:8080`. No app code changed for the run; the temporary `Log.d` diagnostics added while debugging the dropdown were removed before the final build.
+- Build: PASS (`assembleDebug testDebugUnitTest ktlintCheck` after cleanup).
+- Tests: PASS - acceptance test 1-6 completed on `Pixel_API_36` (API 36) with the Firestore emulator, Google account `pablhoney@gmail.com` in `memberEmails`, household `v5yZULI5S4ugLc7FFG6R`. Seed data: categories `Household`/`Groceries`; vendors `Tesco`/`Costa Coffee` with `lastCategoryId=household` and `updatedAt`.
+  1. PASS - empty + focused Vendor shows recent vendors: `Tesco`, `Marks And Spencer`, `Costa Coffee` (newest first).
+  2. PASS - typed `tes`, tapped `Tesco`: Vendor=`Tesco`, Category=`Household`.
+  3. PASS - changed Category to `Groceries`, saved; new Add Expense -> `tes` -> `Tesco` gave Category=`Groceries`. Firestore: transaction `Tesco / groceries / 500`, vendor `tesco.lastCategoryId=groceries`.
+  4. PASS - typed `Marks and Spencer` (new), saved with `Groceries`; transaction stored as `Marks And Spencer`, vendor doc `marks and spencer` created. Reopened, typed `mar`, tapped suggestion: Vendor=`Marks And Spencer`, Category=`Groceries`.
+  5. PASS - typed `TESCO` in capitals and saved: transaction stored as `Tesco`, vendors collection still has exactly one `tesco` doc (3 vendors total, no duplicate).
+  6. PASS - deleted `Household` in Categories (allowed, 0 transactions used it; Firestore now has only `Groceries`), selected `Groceries`, then picked `Costa Coffee` (last category = deleted `household`): Category stayed `Groceries`, no crash (process alive).
+- Notes / open questions:
+  - Emulator quirk observed: on this AVD with the Gboard floating toolbar active, the vendor suggestion popup's pixels were blank (items still existed in the Compose semantics tree, and tapping the correct coordinates selected the right vendor). Disabling the IME (`ime disable ...LatinIME`) made the popup render normally; the Category dropdown always rendered. The same UI test passes with `onNodeWithText("Tesco")`, so this looks like an emulator/IME compositing issue, not app code. Worth a re-check on a physical device.
+  - `local.properties` remains on the emulator flag. Flip `USE_FIRESTORE_EMULATOR` back to `false` and rebuild to use the real project again.
+  - The Firestore emulator (port 8080) and the AVD were left running with the test data; neither persists across a restart (no export configured).
+- Status: DONE
+

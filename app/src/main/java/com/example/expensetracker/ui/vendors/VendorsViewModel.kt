@@ -86,7 +86,7 @@ class VendorsViewModel(
     fun delete(vendor: Vendor) {
         viewModelScope.launch {
             runCatching {
-                vendorRepository.deleteVendor(ServiceLocator.householdId, vendor.id)
+                vendorRepository.deleteVendor(ServiceLocator.householdId, vendor.key)
             }.onFailure { error ->
                 _state.update { it.copy(error = error.message ?: "Delete failed") }
             }

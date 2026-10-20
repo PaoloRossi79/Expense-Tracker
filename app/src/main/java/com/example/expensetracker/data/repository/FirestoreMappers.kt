@@ -113,6 +113,9 @@ internal fun Vendor.toMap(): Map<String, Any?> =
         "name" to name,
         "defaultCategoryId" to defaultCategoryId,
         "matchAliases" to matchAliases,
+        "lastCategoryId" to lastCategoryId,
+        "updatedAt" to FieldValue.serverTimestamp(),
+        "updatedBy" to updatedBy,
     )
 
 internal fun DocumentSnapshot.toVendor(): Vendor? {
@@ -121,10 +124,13 @@ internal fun DocumentSnapshot.toVendor(): Vendor? {
     @Suppress("UNCHECKED_CAST")
     val aliases = get("matchAliases") as? List<String> ?: emptyList()
     return Vendor(
-        id = id,
+        key = id,
         name = name,
         defaultCategoryId = getString("defaultCategoryId"),
         matchAliases = aliases,
+        lastCategoryId = getString("lastCategoryId"),
+        updatedAt = getTimestamp("updatedAt")?.toInstant(),
+        updatedBy = getString("updatedBy"),
     )
 }
 

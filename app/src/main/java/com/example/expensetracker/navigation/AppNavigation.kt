@@ -20,7 +20,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -48,11 +50,11 @@ fun AppNavigation(
     editRequest: RecurringEditRequest?,
     onEditConsumed: () -> Unit,
     onSignOut: () -> Unit,
+    viewModelFactory: ViewModelProvider.Factory = AppViewModelFactory,
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = backStackEntry?.destination?.route
-    val currentType = backStackEntry?.arguments?.getString("type")
+    val currentRoute = backStackEntry?.destination?.route?.substringBefore('?')
 
     val bottomItems =
         listOf(
@@ -62,19 +64,30 @@ fun AppNavigation(
             BottomItem(Routes.TRANSACTIONS, "Transactions", Icons.AutoMirrored.Filled.List),
             BottomItem(Routes.CATEGORIES, "Categories", Icons.Filled.Label),
         )
-    val bottomRoutes = setOf(Routes.HOME, Routes.TRANSACTIONS, Routes.CATEGORIES, Routes.ADD)
+    val bottomRoutes =
+        setOf(
+            Routes.HOME,
+            Routes.ADD_EXPENSE,
+            Routes.ADD_INCOME,
+            Routes.TRANSACTIONS,
+            Routes.CATEGORIES,
+        )
     val showBottomBar = currentRoute in bottomRoutes
-    val selectedRoute =
-        when {
-            currentRoute == Routes.ADD && currentType == "income" -> Routes.ADD_INCOME
-            currentRoute == Routes.ADD -> Routes.ADD_EXPENSE
-            else -> currentRoute
-        }
+    val selectedRoute = currentRoute
 
     fun navigateTo(route: String) {
-        navController.navigate(route) {
-            popUpTo(Routes.HOME) { saveState = true }
-            restoreState = true
+        if (route == Routes.HOME) {
+            if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                navController.navigate(Routes.HOME) {
+                    popUpTo(navController.graph.findStartDestination().id)
+                    launchSingleTop = true
+                }
+            }
+        } else {
+            navController.navigate(route) {
+                popUpTo(navController.graph.findStartDestination().id)
+                launchSingleTop = true
+            }
         }
     }
 
@@ -115,7 +128,7 @@ fun AppNavigation(
                     onOpenVendors = { navController.navigate(Routes.VENDORS) },
                     onOpenMembers = { navController.navigate(Routes.MEMBERS) },
                     onSignOut = onSignOut,
-                    viewModel = viewModel(factory = AppViewModelFactory),
+                    viewModel = viewModel(factory = viewModelFactory),
                 )
             }
             composable(Routes.TRANSACTIONS) {
@@ -123,32 +136,32 @@ fun AppNavigation(
                     onEdit = { transaction ->
                         navController.navigate(Routes.edit(transaction.id, transaction.type))
                     },
-                    viewModel = viewModel(factory = AppViewModelFactory),
+                    viewModel = viewModel(factory = viewModelFactory),
                 )
             }
             composable(Routes.CATEGORIES) {
-                CategoriesScreen(viewModel = viewModel(factory = AppViewModelFactory))
+                CategoriesScreen(viewModel = viewModel(factory = viewModelFactory))
             }
             composable(Routes.VENDORS) {
                 VendorsScreen(
                     onBack = { navController.popBackStack() },
-                    viewModel = viewModel(factory = AppViewModelFactory),
+                    viewModel = viewModel(factory = viewModelFactory),
                 )
             }
             composable(Routes.RECURRING) {
                 RecurringRulesScreen(
                     onBack = { navController.popBackStack() },
-                    viewModel = viewModel(factory = AppViewModelFactory),
+                    viewModel = viewModel(factory = viewModelFactory),
                 )
             }
             composable(Routes.MEMBERS) {
                 AddMemberScreen(
                     onBack = { navController.popBackStack() },
-                    viewModel = viewModel(factory = AppViewModelFactory),
+                    viewModel = viewModel(factory = viewModelFactory),
                 )
             }
             composable(
-                route = "add/expense",
+                route = Routes.ADD_EXPENSE_ROUTE,
                 arguments =
                     listOf(
                         navArgument("transactionId") {
@@ -179,11 +192,11 @@ fun AppNavigation(
                     dueDate = dueDate,
                     onDone = { navController.popBackStack() },
                     onBack = { navController.popBackStack() },
-                    viewModel = viewModel(factory = AppViewModelFactory),
+                    viewModel = viewModel(factory = viewModelFactory),
                 )
             }
             composable(
-                route = "add/income",
+                route = Routes.ADD_INCOME_ROUTE,
                 arguments =
                     listOf(
                         navArgument("transactionId") {
@@ -214,7 +227,7 @@ fun AppNavigation(
                     dueDate = dueDate,
                     onDone = { navController.popBackStack() },
                     onBack = { navController.popBackStack() },
-                    viewModel = viewModel(factory = AppViewModelFactory),
+                    viewModel = viewModel(factory = viewModelFactory),
                 )
             }
         }

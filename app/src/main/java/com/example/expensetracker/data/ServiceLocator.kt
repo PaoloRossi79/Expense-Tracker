@@ -86,7 +86,12 @@ object ServiceLocator {
         householdRepository = FirestoreHouseholdRepository(firestore)
         transactionRepository = FirestoreTransactionRepository(firestore)
         categoryRepository = FirestoreCategoryRepository(firestore)
-        vendorRepository = FirestoreVendorRepository(firestore)
+        vendorRepository =
+            FirestoreVendorRepository(
+                firestore = firestore,
+                householdId = householdId,
+                currentUserId = { authRepository.currentUser?.uid },
+            )
         recurringRepository = FirestoreRecurringRepository(firestore)
         diagnosticsReporter = DiagnosticsReporter(appContext, firestore)
         diagnosticsInstallId = DiagnosticsCollector.installId(appContext)

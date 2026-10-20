@@ -10,16 +10,27 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.paolorossi.expensetracker.data.model.TransactionType
+import com.paolorossi.expensetracker.data.model.Vendor
+import com.paolorossi.expensetracker.domain.VendorSuggestions
 import com.paolorossi.expensetracker.ui.common.AmountField
 import com.paolorossi.expensetracker.ui.common.CategoryPicker
 import com.paolorossi.expensetracker.ui.common.DateField
@@ -67,13 +78,22 @@ fun AddTransactionScreen(
         ) {
             AmountField(value = state.amount, onValueChange = viewModel::onAmountChange)
 
-            OutlinedTextField(
-                value = state.vendor,
-                onValueChange = viewModel::onVendorChange,
-                label = { Text(if (state.type == TransactionType.EXPENSE) "Vendor" else "Source") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (state.type == TransactionType.EXPENSE) {
+                VendorAutocompleteField(
+                    value = state.vendor,
+                    vendors = state.vendors,
+                    onValueChange = viewModel::onVendorChange,
+                    onVendorSelected = viewModel::onVendorSelected,
+                )
+            } else {
+                OutlinedTextField(
+                    value = state.vendor,
+                    onValueChange = viewModel::onVendorChange,
+                    label = { Text("Source") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
 
             DateField(label = "Date", date = state.date, onDateChange = viewModel::onDateChange)
 
@@ -93,6 +113,53 @@ fun AddTransactionScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(if (state.isRecurringConfirm) "Confirm" else "Save")
+            }
+        }
+    }
+}
+
+@Composable
+private fun VendorAutocompleteField(
+    value: String,
+    vendors: List<Vendor>,
+    onValueChange: (String) -> Unit,
+    onVendorSelected: (Vendor) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val suggestions = VendorSuggestions.filter(vendors, value)
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = { text ->
+                onValueChange(text)
+                expanded = VendorSuggestions.filter(vendors, text).isNotEmpty()
+            },
+            label = { Text("Vendor") },
+            singleLine = true,
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier =
+                Modifier
+                    .menuAnchor(MenuAnchorType.PrimaryEditable)
+                    .fillMaxWidth()
+                    .testTag("vendor_field")
+                    .onFocusChanged { focus ->
+                        if (focus.isFocused && value.isEmpty()) expanded = suggestions.isNotEmpty()
+                    },
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            suggestions.forEach { vendor ->
+                DropdownMenuItem(
+                    text = { Text(vendor.name) },
+                    onClick = {
+                        onVendorSelected(vendor)
+                        expanded = false
+                    },
+                )
             }
         }
     }

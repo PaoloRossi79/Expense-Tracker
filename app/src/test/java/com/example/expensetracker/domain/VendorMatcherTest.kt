@@ -6,10 +6,10 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class VendorMatcherTest {
-    private val tesco = Vendor(id = "1", name = "Tesco", defaultCategoryId = "groceries")
+    private val tesco = Vendor(key = "1", name = "Tesco", defaultCategoryId = "groceries")
     private val vodafone =
         Vendor(
-            id = "2",
+            key = "2",
             name = "Vodafone",
             defaultCategoryId = "comms",
             matchAliases = listOf("Vodafone Ltd", "VF"),

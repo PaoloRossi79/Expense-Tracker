@@ -72,7 +72,7 @@ fun VendorsScreen(
                 EmptyState("No vendors yet. Add one to auto-fill categories.")
             } else {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(state.vendors, key = { it.id }) { vendor ->
+                    items(state.vendors, key = { it.key }) { vendor ->
                         ListItem(
                             headlineContent = { Text(vendor.name) },
                             supportingContent = {

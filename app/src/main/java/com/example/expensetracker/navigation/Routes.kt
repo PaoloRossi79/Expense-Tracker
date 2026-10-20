@@ -10,17 +10,22 @@ object Routes {
     const val RECURRING = "recurring"
     const val MEMBERS = "members"
 
-    const val ADD = "add?type={type}&transactionId={transactionId}&ruleId={ruleId}&dueDate={dueDate}"
-    const val ADD_EXPENSE = "expense-entry"
-    const val ADD_INCOME = "add-income"
+    const val ADD_EXPENSE = "add/expense"
+    const val ADD_INCOME = "add/income"
+
+    /** NavHost destination patterns; all three query arguments are optional. */
+    const val ADD_EXPENSE_ROUTE =
+        "add/expense?transactionId={transactionId}&ruleId={ruleId}&dueDate={dueDate}"
+    const val ADD_INCOME_ROUTE =
+        "add/income?transactionId={transactionId}&ruleId={ruleId}&dueDate={dueDate}"
 
     fun edit(
         transactionId: String,
         type: TransactionType,
-    ): String = "add/${type.name.lowercase()}&transactionId=$transactionId"
+    ): String = "add/${type.name.lowercase()}?transactionId=$transactionId"
 
     fun confirmRecurring(
         ruleId: String,
         dueDate: String,
-    ): String = "add/expense&ruleId=$ruleId&dueDate=$dueDate"
+    ): String = "add/expense?ruleId=$ruleId&dueDate=$dueDate"
 }

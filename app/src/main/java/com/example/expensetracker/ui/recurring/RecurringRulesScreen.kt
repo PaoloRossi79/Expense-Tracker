@@ -168,7 +168,7 @@ private fun RecurringRuleDialog(
 
     val availableCategories = CategoryRules.categoriesFor(type, categories)
     val categoryName = categories.firstOrNull { it.id == categoryId }?.name ?: "Choose category"
-    val vendorName = vendors.firstOrNull { it.id == vendorId }?.name ?: "No vendor"
+    val vendorName = vendors.firstOrNull { it.key == vendorId }?.name ?: "No vendor"
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -245,7 +245,7 @@ private fun RecurringRuleDialog(
                             DropdownMenuItem(
                                 text = { Text(vendor.name) },
                                 onClick = {
-                                    vendorId = vendor.id
+                                    vendorId = vendor.key
                                     vendorMenu = false
                                 },
                             )

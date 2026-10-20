@@ -1,8 +1,10 @@
 package com.paolorossi.expensetracker.ui.addtransaction
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.paolorossi.expensetracker.data.ServiceLocator
+import com.paolorossi.expensetracker.data.auth.AuthUser
 import com.paolorossi.expensetracker.data.model.Category
 import com.paolorossi.expensetracker.data.model.CategoryType
 import com.paolorossi.expensetracker.data.model.Transaction
@@ -15,9 +17,12 @@ import com.paolorossi.expensetracker.data.repository.VendorRepository
 import com.paolorossi.expensetracker.domain.CategoryRules
 import com.paolorossi.expensetracker.domain.Money
 import com.paolorossi.expensetracker.domain.VendorMatcher
+import com.paolorossi.expensetracker.domain.VendorNameFormatter
+import com.paolorossi.expensetracker.domain.VendorSuggestions
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -50,6 +55,7 @@ class AddTransactionViewModel(
     private val categoryRepository: CategoryRepository,
     private val vendorRepository: VendorRepository,
     private val recurringRepository: RecurringRepository,
+    private val currentUserProvider: () -> AuthUser? = { ServiceLocator.authRepository.currentUser },
 ) : ViewModel() {
     private val _state = MutableStateFlow(AddTransactionUiState())
     val state: StateFlow<AddTransactionUiState> = _state.asStateFlow()
@@ -73,16 +79,18 @@ class AddTransactionViewModel(
                 runCatching {
                     categoryRepository.observeCategories(householdId).first()
                 }.getOrDefault(emptyList())
-            val vendors =
-                runCatching {
-                    vendorRepository.observeVendors(householdId).first()
-                }.getOrDefault(emptyList())
-            _state.update { it.copy(categories = categories, vendors = vendors, loading = false) }
+            _state.update { it.copy(categories = categories, loading = false) }
 
             when {
                 transactionId != null -> prefillFromTransaction(householdId, transactionId)
                 recurringRuleId != null -> prefillFromRule(householdId, recurringRuleId, dueDate)
             }
+        }
+        viewModelScope.launch {
+            vendorRepository
+                .observeVendors(ServiceLocator.householdId)
+                .catch { /* keep whatever vendor list is already loaded */ }
+                .collect { vendors -> _state.update { it.copy(vendors = vendors) } }
         }
     }
 
@@ -134,12 +142,27 @@ class AddTransactionViewModel(
 
     /** Vendor auto-allocation: match, then pre-fill the category (Design/01 §4.8). */
     fun onVendorChange(value: String) {
-        val match = VendorMatcher.bestMatch(value, _state.value.vendors)
         _state.update { current ->
-            val autoCategory =
-                match?.vendor?.defaultCategoryId
-                    ?.takeIf { id -> current.categories.any { it.id == id } }
-            current.copy(vendor = value, categoryId = autoCategory ?: current.categoryId)
+            when (current.type) {
+                // Add Expense fills the category only when a suggestion is tapped.
+                TransactionType.EXPENSE -> current.copy(vendor = value)
+                TransactionType.INCOME -> {
+                    val match = VendorMatcher.bestMatch(value, current.vendors)
+                    val autoCategory =
+                        match?.vendor?.defaultCategoryId
+                            ?.takeIf { id -> current.categories.any { it.id == id } }
+                    current.copy(vendor = value, categoryId = autoCategory ?: current.categoryId)
+                }
+            }
+        }
+    }
+
+    /** Tapping a suggestion fills the vendor and its last used category, when still available. */
+    fun onVendorSelected(vendor: Vendor) {
+        _state.update { current ->
+            val categoryId =
+                VendorSuggestions.categoryFor(vendor, current.availableCategories.map { it.id }.toSet())
+            current.copy(vendor = vendor.name, categoryId = categoryId ?: current.categoryId)
         }
     }
 
@@ -177,11 +200,14 @@ class AddTransactionViewModel(
             _state.update { it.copy(error = "Choose a category") }
             return
         }
-        val user = ServiceLocator.authRepository.currentUser
+        val user = currentUserProvider()
         if (user == null) {
             _state.update { it.copy(error = "Not signed in") }
             return
         }
+
+        val isNewExpense = snapshot.editingId == null && snapshot.recurringRuleId == null
+        val vendor = VendorNameFormatter.toDisplayName(snapshot.vendor)
 
         viewModelScope.launch {
             val result =
@@ -199,7 +225,7 @@ class AddTransactionViewModel(
                                 user = user,
                                 amountPence = pence,
                                 categoryId = categoryId,
-                                vendor = snapshot.vendor,
+                                vendor = vendor,
                             )
                         }
 
@@ -211,7 +237,7 @@ class AddTransactionViewModel(
                                     type = snapshot.type,
                                     amountPence = pence,
                                     date = snapshot.date,
-                                    vendor = snapshot.vendor,
+                                    vendor = vendor,
                                     categoryId = categoryId,
                                     createdByUid = user.uid,
                                     createdByName = user.displayName,
@@ -225,7 +251,7 @@ class AddTransactionViewModel(
                                     type = snapshot.type,
                                     amountPence = pence,
                                     date = snapshot.date,
-                                    vendor = snapshot.vendor,
+                                    vendor = vendor,
                                     categoryId = categoryId,
                                     createdByUid = user.uid,
                                     createdByName = user.displayName,
@@ -234,10 +260,20 @@ class AddTransactionViewModel(
                     }
                 }
             result
-                .onSuccess { _state.update { it.copy(finished = true) } }
+                .onSuccess {
+                    if (isNewExpense) {
+                        runCatching { vendorRepository.recordUsage(snapshot.vendor, categoryId) }
+                            .onFailure { Log.w(TAG, "Vendor usage not recorded", it) }
+                    }
+                    _state.update { it.copy(finished = true) }
+                }
                 .onFailure { error ->
                     _state.update { it.copy(error = error.message ?: "Save failed") }
                 }
         }
+    }
+
+    private companion object {
+        private const val TAG = "AddTransactionViewModel"
     }
 }

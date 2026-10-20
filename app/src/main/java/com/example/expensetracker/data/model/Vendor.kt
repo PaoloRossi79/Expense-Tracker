@@ -1,12 +1,17 @@
 package com.paolorossi.expensetracker.data.model
 
+import java.time.Instant
+
 /**
- * A known vendor with an optional default category and extra match aliases used
- * by vendor auto-allocation (Design/01 §4.8).
+ * A known vendor. [key] is the Firestore document id (lower-case, trimmed,
+ * single spaces), so the same vendor in any spelling maps to one document.
  */
 data class Vendor(
-    val id: String = "",
-    val name: String,
+    val key: String = "",
+    val name: String = "",
     val defaultCategoryId: String? = null,
     val matchAliases: List<String> = emptyList(),
+    val lastCategoryId: String? = null,
+    val updatedAt: Instant? = null,
+    val updatedBy: String? = null,
 )

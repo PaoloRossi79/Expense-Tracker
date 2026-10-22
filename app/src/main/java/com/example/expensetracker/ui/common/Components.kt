@@ -202,7 +202,7 @@ fun DateField(
     val initialMillis = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
 
     OutlinedTextField(
-        value = date.toString(),
+        value = date.toUkDate(),
         onValueChange = {},
         readOnly = true,
         label = { Text(label) },
@@ -271,7 +271,7 @@ fun TransactionRow(
         },
         headlineContent = { Text(transaction.vendor.ifBlank { category?.name ?: "Uncategorised" }) },
         supportingContent = {
-            Text("${transaction.date} · ${category?.name ?: "Uncategorised"}")
+            Text("${transaction.date.toTransactionDate()} · ${category?.name ?: "Uncategorised"}")
         },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {

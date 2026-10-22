@@ -39,6 +39,7 @@ import com.paolorossi.expensetracker.data.repository.PendingOccurrence
 import com.paolorossi.expensetracker.domain.Money
 import com.paolorossi.expensetracker.domain.MonthlyTotals
 import com.paolorossi.expensetracker.ui.common.ScreenScaffold
+import com.paolorossi.expensetracker.ui.common.toUkDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 
@@ -215,7 +216,7 @@ private fun PendingRecurringCard(
             pending.forEach { item ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        "${item.rule.reason} · ${Money.formatPence(item.rule.amountPence)} · ${item.dueDate}",
+                        "${item.rule.reason} · ${Money.formatPence(item.rule.amountPence)} · ${item.dueDate.toUkDate()}",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -15,6 +15,7 @@ Rules for AI coding agents working on this native Android (Kotlin) codebase. Rea
 | Static analysis | `./gradlew detekt ktlintCheck lintDebug` |
 | Coverage gate | `./gradlew koverVerify` (or `jacocoTestCoverageVerification`) |
 | Dependency vulnerabilities | `./gradlew dependencyCheckAnalyze` |
+| Start emulator | `emulator -avd Pixel_API_36` |
 
 Run format, static analysis, unit tests, and the coverage gate before reporting any task as done. Run instrumented tests whenever you touched Room, navigation, or Compose UI, and say clearly if no emulator was available.
 

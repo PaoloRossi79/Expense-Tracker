@@ -1,3 +1,4 @@
+import com.android.build.api.variant.impl.VariantOutputImpl
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
 
@@ -33,6 +34,15 @@ val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
 val gitSha = System.getenv("GITHUB_SHA")?.take(7)
 val appVersionCode = ciRunNumber?.let { 100 + it } ?: 3
 val appVersionName = "1.0.0+" + (gitSha ?: "local")
+
+// Build number used in the APK filename. CI builds use the workflow run number;
+// local builds fall back to the commit count, so the number still only grows.
+val appBuildNumber =
+    ciRunNumber ?: (
+        providers
+            .exec { commandLine("git", "rev-list", "--count", "HEAD") }
+            .standardOutput.asText.get().trim().toIntOrNull() ?: 0
+    )
 
 if (hasGoogleServices) {
     apply(plugin = "com.google.gms.google-services")
@@ -106,6 +116,14 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            (output as VariantOutputImpl).outputFileName.set("ExpenseTracker-$appBuildNumber.apk")
+        }
     }
 }
 

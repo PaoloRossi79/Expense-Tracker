@@ -71,4 +71,4 @@ jobs:
           appId: ${{ secrets.FIREBASE_APP_ID }}
           serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           groups: ${{ secrets.FIREBASE_TESTER_GROUP }}
-          file: app/build/outputs/apk/release/app-release.apk
+          file: app/build/outputs/apk/release/ExpenseTracker-${{ github.run_number }}.apk

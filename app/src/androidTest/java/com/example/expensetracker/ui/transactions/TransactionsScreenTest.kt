@@ -16,7 +16,9 @@ import kotlinx.coroutines.flow.flowOf
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.time.LocalDate
+import java.time.YearMonth
+import java.time.format.TextStyle
+import java.util.Locale
 
 /**
  * UI tests for the transactions list (Design/01 §7). The key negative case:
@@ -32,12 +34,14 @@ class TransactionsScreenTest {
             Category(id = "c1", name = "Groceries", type = CategoryType.EXPENSE),
         )
 
+    private val month = YearMonth.now()
+
     private val mine =
         Transaction(
             id = "mine",
             type = TransactionType.EXPENSE,
             amountPence = 100,
-            date = LocalDate.of(2026, 3, 10),
+            date = month.atDay(10),
             vendor = "My Shop",
             categoryId = "c1",
             createdByUid = "me",
@@ -49,7 +53,7 @@ class TransactionsScreenTest {
             id = "theirs",
             type = TransactionType.EXPENSE,
             amountPence = 200,
-            date = LocalDate.of(2026, 3, 11),
+            date = month.atDay(11),
             vendor = "Their Shop",
             categoryId = "c1",
             createdByUid = "other",
@@ -69,6 +73,16 @@ class TransactionsScreenTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithText("My Shop").assertExists()
         composeRule.onNodeWithText("Their Shop").assertExists()
+    }
+
+    @Test
+    fun transactionDateShowsDayAndWeekdayWithoutMonthOrYear() {
+        composeRule.setContent { TransactionsScreen(onEdit = {}, viewModel = viewModel()) }
+        composeRule.waitForIdle()
+        val weekday = mine.date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.UK)
+        composeRule
+            .onNodeWithText("${mine.date.dayOfMonth} - $weekday", substring = true)
+            .assertExists()
     }
 
     @Test

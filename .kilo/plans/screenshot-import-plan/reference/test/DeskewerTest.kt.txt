@@ -1,0 +1,65 @@
+package com.example.expenses.importer.ocr
+
+import com.example.expenses.importer.model.OcrBox
+import com.example.expenses.importer.model.OcrResult
+import com.example.expenses.importer.model.OcrWord
+import com.example.expenses.importer.parsing.GENERIC_PROFILE
+import com.example.expenses.importer.parsing.ProfileBasedParser
+import com.example.expenses.importer.testutil.ocr
+import java.time.LocalDate
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
+import org.junit.Test
+
+class DeskewerTest {
+    private val today = LocalDate.of(2026, 10, 24)
+    private val upright = ocr {
+        row(300) { word("Today", 40) }
+        row(400) { word("Tesco", 160); right("-£12.50") }
+        row(500) { word("Costa", 160); right("-£3.40") }
+        row(900) { word("Boots", 160); right("-£7.00") }
+        row(1500) { word("Pret", 160); right("-£4.50") }
+    }
+
+    /** Simulates a photo taken with the phone tilted by [deg] degrees clockwise. */
+    private fun tilt(src: OcrResult, deg: Double): OcrResult {
+        val t = Math.toRadians(deg)
+        val cx = src.imageWidth / 2.0
+        val cy = src.imageHeight / 2.0
+        return src.copy(words = src.words.map { w ->
+            val dx = w.box.centerX - cx
+            val dy = w.box.centerY - cy
+            val nx = cx + dx * cos(t) - dy * sin(t)
+            val ny = cy + dx * sin(t) + dy * cos(t)
+            OcrWord(w.text, OcrBox((nx - w.box.width / 2).roundToInt(), (ny - w.box.height / 2).roundToInt(),
+                (nx + w.box.width / 2).roundToInt(), (ny + w.box.height / 2).roundToInt()), deg.toFloat())
+        })
+    }
+
+    private fun rows(o: OcrResult) = ProfileBasedParser(GENERIC_PROFILE).parse(o, today).transactions.map { it.vendor to it.amountMinor }
+
+    @Test fun smallAngleUnchanged() {
+        val o = tilt(upright, 0.2)
+        assertSame(o, Deskewer.deskew(o))
+    }
+
+    @Test fun hugeAngleUnchanged() {
+        val o = tilt(upright, 30.0)
+        assertSame(o, Deskewer.deskew(o))
+    }
+
+    @Test fun emptyUnchanged() {
+        val o = ocr { }
+        assertSame(o, Deskewer.deskew(o))
+    }
+
+    @Test fun tiltedPhotoParsesLikeUpright() {
+        val expected = rows(upright)
+        assertEquals(4, expected.size)
+        assertEquals(expected, rows(Deskewer.deskew(tilt(upright, 3.0))))
+        assertEquals(expected, rows(Deskewer.deskew(tilt(upright, -2.0))))
+    }
+}

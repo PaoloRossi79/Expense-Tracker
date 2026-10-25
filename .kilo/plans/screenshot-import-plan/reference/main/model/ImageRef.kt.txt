@@ -1,0 +1,7 @@
+package com.example.expenses.importer.model
+
+/**
+ * Pointer to the picked image: the text of a content:// or file:// URI.
+ * Keeps the importer free of android.net.Uri, which cannot be created in plain JVM unit tests.
+ */
+data class ImageRef(val uri: String)

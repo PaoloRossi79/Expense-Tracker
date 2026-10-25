@@ -1,0 +1,26 @@
+package com.example.expenses.importer.parsing
+
+object VendorCleaner {
+    fun clean(raw: String, noisePrefixes: List<String> = emptyList()): String {
+        var text = tidy(raw)
+        val prefix = noisePrefixes
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .sortedByDescending { it.length }
+            .firstOrNull { p ->
+                text.startsWith(p, ignoreCase = true) &&
+                    (text.length == p.length || text[p.length] == ' ' || text[p.length] == ':')
+            }
+        if (prefix != null) text = text.substring(prefix.length)
+        return tidy(text)
+    }
+
+    /** Collapse whitespace, then cut everything before the first and after the last letter/digit. */
+    private fun tidy(text: String): String {
+        val collapsed = text.replace(Regex("\\s+"), " ").trim()
+        val start = collapsed.indexOfFirst { it.isLetterOrDigit() }
+        if (start < 0) return ""
+        val end = collapsed.indexOfLast { it.isLetterOrDigit() }
+        return collapsed.substring(start, end + 1)
+    }
+}

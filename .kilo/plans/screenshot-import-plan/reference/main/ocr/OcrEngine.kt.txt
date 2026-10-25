@@ -1,0 +1,9 @@
+package com.example.expenses.importer.ocr
+
+import com.example.expenses.importer.model.ImageRef
+import com.example.expenses.importer.model.OcrResult
+
+interface OcrEngine {
+    /** Reads the image and returns every recognised word with its box. Never uploads anything. */
+    suspend fun recognise(image: ImageRef): OcrResult
+}

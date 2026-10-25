@@ -1,0 +1,12 @@
+package com.example.expenses.importer.parsing
+
+import com.example.expenses.importer.model.Bank
+import com.example.expenses.importer.parsing.banks.GenericParser
+
+object ParserRegistry {
+    fun forBank(bank: Bank): BankStatementParser = when (bank) {
+        Bank.GENERIC -> GenericParser
+        // Replaced one by one in T12-T15:
+        Bank.REVOLUT, Bank.MONZO, Bank.BARCLAYS, Bank.CHASE -> GenericParser
+    }
+}

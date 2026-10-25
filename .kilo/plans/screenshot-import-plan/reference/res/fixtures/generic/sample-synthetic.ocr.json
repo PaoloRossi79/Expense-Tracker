@@ -1,0 +1,11 @@
+{"imageWidth":1080,"imageHeight":2400,"words":[
+{"text":"Today","left":40,"top":280,"right":160,"bottom":320,"angleDeg":0.0},
+{"text":"Tesco","left":160,"top":380,"right":270,"bottom":420,"angleDeg":0.0},
+{"text":"-£12.50","left":860,"top":380,"right":1020,"bottom":420,"angleDeg":0.0},
+{"text":"Groceries","left":160,"top":440,"right":330,"bottom":475,"angleDeg":0.0},
+{"text":"Yesterday","left":40,"top":560,"right":220,"bottom":600,"angleDeg":0.0},
+{"text":"Salary","left":160,"top":660,"right":280,"bottom":700,"angleDeg":0.0},
+{"text":"+£2,500.00","left":800,"top":660,"right":1020,"bottom":700,"angleDeg":0.0},
+{"text":"Costa","left":160,"top":760,"right":260,"bottom":800,"angleDeg":0.0},
+{"text":"-£3.40","left":880,"top":760,"right":1020,"bottom":800,"angleDeg":0.0}
+]}

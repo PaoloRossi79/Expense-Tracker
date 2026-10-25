@@ -1,0 +1,27 @@
+package com.example.expenses.importer.ui
+
+import com.example.expenses.importer.domain.CategoryRef
+import com.example.expenses.importer.domain.CommitResult
+import com.example.expenses.importer.domain.ReviewItem
+import com.example.expenses.importer.model.Bank
+import com.example.expenses.importer.model.TransactionKind
+
+enum class Phase { PICK, WORKING, REVIEW, SAVING, DONE }
+
+data class ImportUiState(
+    val phase: Phase = Phase.PICK,
+    val bank: Bank = Bank.GENERIC,
+    val includeIncome: Boolean = false,
+    val items: List<ReviewItem> = emptyList(),          // ALL items, including income
+    val warnings: List<String> = emptyList(),
+    val expenseCategories: List<CategoryRef> = emptyList(),
+    val incomeCategories: List<CategoryRef> = emptyList(),
+    val error: String? = null,
+    val result: CommitResult? = null,
+) {
+    val visibleItems: List<ReviewItem> get() = items.filter { includeIncome || it.kind == TransactionKind.EXPENSE }
+    val hiddenIncomeCount: Int get() = if (includeIncome) 0 else items.count { it.kind == TransactionKind.INCOME }
+    val importable: List<ReviewItem> get() = visibleItems.filter { it.selected }
+    val missingCategoryCount: Int get() = importable.count { it.category == null }
+    val canImport: Boolean get() = importable.isNotEmpty() && missingCategoryCount == 0
+}

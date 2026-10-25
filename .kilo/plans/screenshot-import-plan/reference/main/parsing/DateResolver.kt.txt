@@ -1,0 +1,94 @@
+package com.example.expenses.importer.parsing
+
+import java.time.DateTimeException
+import java.time.LocalDate
+
+object DateResolver {
+    private val MONTHS: Map<String, Int> = mapOf(
+        "january" to 1, "february" to 2, "march" to 3, "april" to 4, "may" to 5, "june" to 6,
+        "july" to 7, "august" to 8, "september" to 9, "october" to 10, "november" to 11, "december" to 12,
+        "jan" to 1, "feb" to 2, "mar" to 3, "apr" to 4, "jun" to 6, "jul" to 7, "aug" to 8,
+        "sep" to 9, "sept" to 9, "oct" to 10, "nov" to 11, "dec" to 12,
+    )
+    private val WEEKDAYS: List<String> = listOf(
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+        "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun",
+    )
+
+    private val monthAlt = MONTHS.keys.sortedByDescending { it.length }.joinToString("|")
+    private val dayAlt = WEEKDAYS.sortedByDescending { it.length }.joinToString("|")
+    private const val ORD = "(?:st|nd|rd|th)?"
+    private val DM = "(?:(?:$dayAlt)\\s+)?(\\d{1,2})$ORD\\s+($monthAlt)(?:\\s+(\\d{4}))?"
+    private val MD = "(?:(?:$dayAlt)\\s+)?($monthAlt)\\s+(\\d{1,2})$ORD(?:\\s+(\\d{4}))?"
+    private val NUM = "(\\d{1,2})/(\\d{1,2})(?:/(\\d{4}|\\d{2}))?"
+
+    private val DM_EXACT = Regex("^$DM$")
+    private val MD_EXACT = Regex("^$MD$")
+    private val NUM_EXACT = Regex("^$NUM$")
+    private val DM_FIND = Regex("\\b$DM\\b")
+    private val MD_FIND = Regex("\\b$MD\\b")
+    private val TODAY_WORD = Regex("\\btoday\\b")
+    private val YESTERDAY_WORD = Regex("\\byesterday\\b")
+
+    /** The whole text must be a date. Used for header rows. */
+    fun parseExact(text: String, today: LocalDate): LocalDate? {
+        val s = normalise(text)
+        if (s.isEmpty()) return null
+        if (s == "today") return today
+        if (s == "yesterday") return today.minusDays(1)
+        DM_EXACT.matchEntire(s)?.let { return fromDayMonth(it, today) }
+        MD_EXACT.matchEntire(s)?.let { return fromMonthDay(it, today) }
+        NUM_EXACT.matchEntire(s)?.let { m ->
+            val day = m.groupValues[1].toInt()
+            val month = m.groupValues[2].toInt()
+            val yearText = m.groupValues[3]
+            val year = when (yearText.length) {
+                0 -> null
+                2 -> 2000 + yearText.toInt()
+                else -> yearText.toInt()
+            }
+            return resolve(day, month, year, today)
+        }
+        return null
+    }
+
+    /** Finds the first date anywhere inside the text (e.g. "22 Oct · Card payment"). Used for per-row dates. */
+    fun findIn(text: String, today: LocalDate): LocalDate? {
+        val s = normalise(text)
+        if (s.isEmpty()) return null
+        if (TODAY_WORD.containsMatchIn(s)) return today
+        if (YESTERDAY_WORD.containsMatchIn(s)) return today.minusDays(1)
+        DM_FIND.find(s)?.let { m -> fromDayMonth(m, today)?.let { return it } }
+        MD_FIND.find(s)?.let { m -> fromMonthDay(m, today)?.let { return it } }
+        return null
+    }
+
+    private fun normalise(text: String): String {
+        var s = text.lowercase().replace(',', ' ').replace('·', ' ').replace('•', ' ').trim()
+        if (s.endsWith(".")) s = s.dropLast(1)
+        return s.replace(Regex("\\s+"), " ").trim()
+    }
+
+    private fun fromDayMonth(m: MatchResult, today: LocalDate): LocalDate? {
+        val month = MONTHS[m.groupValues[2]] ?: return null
+        val year = m.groupValues[3].ifEmpty { null }?.toInt()
+        return resolve(m.groupValues[1].toInt(), month, year, today)
+    }
+
+    private fun fromMonthDay(m: MatchResult, today: LocalDate): LocalDate? {
+        val month = MONTHS[m.groupValues[1]] ?: return null
+        val year = m.groupValues[3].ifEmpty { null }?.toInt()
+        return resolve(m.groupValues[2].toInt(), month, year, today)
+    }
+
+    private fun resolve(day: Int, month: Int, year: Int?, today: LocalDate): LocalDate? = try {
+        if (year != null) {
+            LocalDate.of(year, month, day)
+        } else {
+            val thisYear = LocalDate.of(today.year, month, day)
+            if (thisYear.isAfter(today.plusDays(1))) LocalDate.of(today.year - 1, month, day) else thisYear
+        }
+    } catch (e: DateTimeException) {
+        null
+    }
+}

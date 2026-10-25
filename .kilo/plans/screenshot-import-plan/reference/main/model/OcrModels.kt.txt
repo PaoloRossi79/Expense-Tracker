@@ -1,0 +1,14 @@
+package com.example.expenses.importer.model
+
+/** Pixel box in the coordinate space of the recognised image. */
+data class OcrBox(val left: Int, val top: Int, val right: Int, val bottom: Int) {
+    val width: Int get() = right - left
+    val height: Int get() = bottom - top
+    val centerX: Double get() = (left + right) / 2.0
+    val centerY: Double get() = (top + bottom) / 2.0
+}
+
+/** One recognised word (ML Kit "Element"). angleDeg is 0 for an upright word. */
+data class OcrWord(val text: String, val box: OcrBox, val angleDeg: Float = 0f)
+
+data class OcrResult(val imageWidth: Int, val imageHeight: Int, val words: List<OcrWord>)

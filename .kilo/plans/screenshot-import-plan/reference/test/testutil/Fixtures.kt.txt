@@ -1,0 +1,105 @@
+package com.example.expenses.importer.testutil
+
+import com.example.expenses.importer.model.Bank
+import com.example.expenses.importer.model.OcrBox
+import com.example.expenses.importer.model.OcrResult
+import com.example.expenses.importer.model.OcrWord
+import com.example.expenses.importer.model.TransactionKind
+import com.google.gson.Gson
+import java.io.File
+import java.math.BigDecimal
+import java.time.LocalDate
+
+data class ExpectedRow(
+    val date: LocalDate,
+    val vendor: String,
+    val amountMinor: Long,
+    val kind: TransactionKind,
+    val pending: Boolean,
+    val dateUncertain: Boolean,
+)
+
+data class ExpectedFile(val bank: Bank, val today: LocalDate, val rows: List<ExpectedRow>)
+
+object Fixtures {
+    private val gson = Gson()
+
+    private data class WordJson(
+        val text: String,
+        val left: Int,
+        val top: Int,
+        val right: Int,
+        val bottom: Int,
+        val angleDeg: Float?,
+    )
+
+    private data class OcrJson(val imageWidth: Int, val imageHeight: Int, val words: List<WordJson>)
+
+    private fun root(): File {
+        val url = requireNotNull(Fixtures::class.java.classLoader?.getResource("fixtures")) { "fixtures folder missing" }
+        return File(url.toURI())
+    }
+
+    /** e.g. "generic/sample-synthetic" */
+    fun allNames(): List<String> = root().walkTopDown()
+        .filter { it.isFile && it.name.endsWith(".ocr.json") }
+        .map { it.relativeTo(root()).path.removeSuffix(".ocr.json").replace(File.separatorChar, '/') }
+        .sorted()
+        .toList()
+
+    fun loadOcr(name: String): OcrResult {
+        val parsed = gson.fromJson(File(root(), "$name.ocr.json").readText(), OcrJson::class.java)
+        return OcrResult(
+            parsed.imageWidth,
+            parsed.imageHeight,
+            parsed.words.map { OcrWord(it.text, OcrBox(it.left, it.top, it.right, it.bottom), it.angleDeg ?: 0f) },
+        )
+    }
+
+    fun hasExpected(name: String): Boolean = File(root(), "$name.expected.txt").exists()
+
+    fun loadExpected(name: String): ExpectedFile = parseExpected(File(root(), "$name.expected.txt").readText())
+
+    /** Parses the text of an expected file (format: 00-ARCHITECTURE.md section 6). */
+    fun parseExpected(text: String): ExpectedFile {
+        var today: LocalDate? = null
+        var bank: Bank? = null
+        val rows = mutableListOf<ExpectedRow>()
+        for (rawLine in text.lines()) {
+            val line = rawLine.trim()
+            if (line.isEmpty()) continue
+            if (line.startsWith("#")) {
+                val body = line.removePrefix("#").trim()
+                when {
+                    body.startsWith("today:", ignoreCase = true) -> today = LocalDate.parse(body.substringAfter(":").trim())
+                    body.startsWith("bank:", ignoreCase = true) -> bank = Bank.valueOf(body.substringAfter(":").trim().uppercase())
+                }
+                continue
+            }
+            val parts = line.split("|").map { it.trim() }
+            require(parts.size in 4..5) { "Expected 'date | vendor | amount | KIND [| FLAGS]' but got: $line" }
+            val flags = if (parts.size == 5) {
+                parts[4].split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
+            } else {
+                emptySet()
+            }
+            rows += ExpectedRow(
+                date = LocalDate.parse(parts[0]),
+                vendor = normaliseVendor(parts[1]),
+                amountMinor = BigDecimal(parts[2]).movePointRight(2).longValueExact(),
+                kind = TransactionKind.valueOf(parts[3].uppercase()),
+                pending = "PENDING" in flags,
+                dateUncertain = "DATE_UNCERTAIN" in flags,
+            )
+        }
+        return ExpectedFile(
+            bank = requireNotNull(bank) { "Expected file is missing the '# bank: NAME' line" },
+            today = requireNotNull(today) { "Expected file is missing the '# today: yyyy-MM-dd' line" },
+            rows = rows,
+        )
+    }
+
+    fun normaliseVendor(s: String): String = s.trim().lowercase().replace(Regex("\\s+"), " ")
+
+    fun wordTexts(name: String): List<String> = loadOcr(name).words.map { it.text }
+}

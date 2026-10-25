@@ -1,0 +1,72 @@
+package com.example.expenses.importer.parsing
+
+import com.example.expenses.importer.model.OcrBox
+import com.example.expenses.importer.model.OcrResult
+import com.example.expenses.importer.model.OcrWord
+import kotlin.math.abs
+
+data class Segment(val text: String, val box: OcrBox)
+
+data class Band(val segments: List<Segment>) {
+    val text: String get() = segments.joinToString(" ") { it.text }
+    val centerY: Double get() = segments.map { it.box.centerY }.average()
+}
+
+object LayoutAnalyzer {
+    fun buildBands(
+        ocr: OcrResult,
+        bandTolerance: Double = 0.6,
+        segmentGapFactor: Double = 1.5,
+    ): List<Band> {
+        if (ocr.words.isEmpty()) return emptyList()
+        val medianHeight = medianHeight(ocr.words)
+
+        // 1. group words into bands by vertical position
+        val groups = mutableListOf<MutableList<OcrWord>>()
+        var sum = 0.0
+        for (word in ocr.words.sortedBy { it.box.centerY }) {
+            val current = groups.lastOrNull()
+            if (current != null && abs(word.box.centerY - sum / current.size) <= bandTolerance * medianHeight) {
+                current += word
+                sum += word.box.centerY
+            } else {
+                groups += mutableListOf(word)
+                sum = word.box.centerY
+            }
+        }
+
+        // 2. split every band into segments by horizontal gaps
+        val gap = segmentGapFactor * medianHeight
+        return groups.map { toBand(it, gap) }
+    }
+
+    private fun toBand(words: List<OcrWord>, gap: Double): Band {
+        val segments = mutableListOf<MutableList<OcrWord>>()
+        for (word in words.sortedBy { it.box.left }) {
+            val current = segments.lastOrNull()
+            if (current != null && (word.box.left - current.last().box.right) <= gap) {
+                current += word
+            } else {
+                segments += mutableListOf(word)
+            }
+        }
+        return Band(segments.map { group ->
+            Segment(
+                text = group.joinToString(" ") { it.text },
+                box = OcrBox(
+                    left = group.minOf { it.box.left },
+                    top = group.minOf { it.box.top },
+                    right = group.maxOf { it.box.right },
+                    bottom = group.maxOf { it.box.bottom },
+                ),
+            )
+        })
+    }
+
+    private fun medianHeight(words: List<OcrWord>): Double {
+        val heights = words.map { it.box.height }.filter { it > 0 }.sorted()
+        if (heights.isEmpty()) return 1.0
+        val mid = heights.size / 2
+        return if (heights.size % 2 == 1) heights[mid].toDouble() else (heights[mid - 1] + heights[mid]) / 2.0
+    }
+}

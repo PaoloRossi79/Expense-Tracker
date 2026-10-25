@@ -1,0 +1,41 @@
+package com.example.expenses.importer.domain
+
+import com.example.expenses.importer.dedupe.DuplicateStatus
+import com.example.expenses.importer.dedupe.ExistingTx
+import com.example.expenses.importer.model.TransactionKind
+import java.time.LocalDate
+
+data class CategoryRef(val id: String, val name: String, val kind: TransactionKind)
+
+data class ReviewItem(
+    val id: Int,                     // index in the prepared list, stable for the session
+    val selected: Boolean,
+    val date: LocalDate,
+    val vendor: String,
+    val amountMinor: Long,
+    val kind: TransactionKind,
+    val category: CategoryRef?,
+    val duplicate: DuplicateStatus,
+    val pending: Boolean,
+    val dateUncertain: Boolean,
+    val rawText: String,
+)
+
+data class PreparedImport(val items: List<ReviewItem>, val warnings: List<String>)
+
+// ---- ports ----
+interface ExistingTransactionsSource { suspend fun between(from: LocalDate, to: LocalDate): List<ExistingTx> }
+interface VendorCategoryLookup { suspend fun categoryFor(vendor: String, kind: TransactionKind): CategoryRef? }
+interface CategorySource { suspend fun list(kind: TransactionKind): List<CategoryRef> }
+fun interface VendorNameNormalizer { fun normalise(raw: String): String }
+
+// ---- used by commit ----
+data class NewTransaction(
+    val date: LocalDate,
+    val vendor: String,
+    val amountMinor: Long,
+    val kind: TransactionKind,
+    val categoryId: String,
+)
+fun interface TransactionWriter { suspend fun add(tx: NewTransaction) }
+data class CommitResult(val saved: Int, val failed: Int, val skippedNoCategory: Int)

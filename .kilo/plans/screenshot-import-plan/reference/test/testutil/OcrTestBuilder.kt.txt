@@ -1,0 +1,45 @@
+package com.example.expenses.importer.testutil
+
+import com.example.expenses.importer.model.OcrBox
+import com.example.expenses.importer.model.OcrResult
+import com.example.expenses.importer.model.OcrWord
+
+fun ocr(width: Int = 1080, height: Int = 2400, block: OcrBuilder.() -> Unit): OcrResult {
+    val builder = OcrBuilder(width)
+    builder.block()
+    return OcrResult(width, height, builder.words)
+}
+
+class OcrBuilder(private val imageWidth: Int) {
+    internal val words = mutableListOf<OcrWord>()
+
+    /** y = vertical centre of the row in px. */
+    fun row(y: Int, block: RowBuilder.() -> Unit) {
+        RowBuilder(y, imageWidth, words).block()
+    }
+}
+
+class RowBuilder(
+    private val y: Int,
+    private val imageWidth: Int,
+    private val out: MutableList<OcrWord>,
+) {
+    /** One word starting at x. Width = 22 px per character, height = 40 px. */
+    fun word(text: String, x: Int) {
+        out += OcrWord(text, OcrBox(left = x, top = y - 20, right = x + 22 * text.length, bottom = y + 20))
+    }
+
+    /** Several words separated by single spaces, starting at x, with a 20 px gap between words. */
+    fun words(text: String, x: Int) {
+        var cursor = x
+        for (part in text.split(" ")) {
+            word(part, cursor)
+            cursor += 22 * part.length + 20
+        }
+    }
+
+    /** Right-aligned: the word ends at (image width - margin). Default margin 60. */
+    fun right(text: String, margin: Int = 60) {
+        word(text, imageWidth - margin - 22 * text.length)
+    }
+}

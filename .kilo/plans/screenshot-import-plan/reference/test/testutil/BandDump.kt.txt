@@ -1,0 +1,14 @@
+package com.example.expenses.importer.testutil
+
+import com.example.expenses.importer.model.OcrResult
+import com.example.expenses.importer.parsing.LayoutAnalyzer
+import java.util.Locale
+
+object BandDump {
+    /** One line per band: index, y, then each segment as [left%|text]. Uses the default grouping parameters. */
+    fun format(ocr: OcrResult): String =
+        LayoutAnalyzer.buildBands(ocr).withIndex().joinToString("\n") { (index, band) ->
+            val segments = band.segments.joinToString("  ") { "[${it.box.left * 100 / ocr.imageWidth}%|${it.text}]" }
+            String.format(Locale.ROOT, "#%02d y=%d  %s", index, band.centerY.toInt(), segments)
+        }
+}

@@ -32,3 +32,7 @@ ui-debug.log
 firestore-tests/node_modules/
 firestore-tests/package-lock.json
 .kilo/kilo.jsonc
+
+# screenshot import: private bank data must never be committed
+fixtures-private/
+*.ocr.private.json

@@ -1,0 +1,27 @@
+package com.example.expenses.importer.parsing
+
+import com.example.expenses.importer.model.Bank
+
+enum class DateSource { SECTION_HEADER, PER_ROW }
+enum class IncomeRule { PLUS_MARKS_INCOME, UNSIGNED_IS_INCOME }
+
+val DEFAULT_IGNORE_VENDOR_REGEXES: List<Regex> = listOf(
+    Regex("^(balance|money in|money out|available balance|left to spend)\\b", RegexOption.IGNORE_CASE),
+    Regex("^total (in|out|spent|spend)\\b", RegexOption.IGNORE_CASE),
+)
+
+data class ParserProfile(
+    val bank: Bank,
+    val dateSource: DateSource = DateSource.SECTION_HEADER,
+    val incomeRule: IncomeRule = IncomeRule.PLUS_MARKS_INCOME,
+    val minAmountLeftFraction: Double = 0.55,
+    val bandTolerance: Double = 0.6,
+    val segmentGapFactor: Double = 1.5,
+    val vendorNoisePrefixes: List<String> = emptyList(),
+    val ignoreVendorRegexes: List<Regex> = DEFAULT_IGNORE_VENDOR_REGEXES,
+    val subtitleLookahead: Int = 2,
+    val pendingRegex: Regex? = null,
+    val avatarColumnFraction: Double = 0.0,
+)
+
+val GENERIC_PROFILE = ParserProfile(bank = Bank.GENERIC)

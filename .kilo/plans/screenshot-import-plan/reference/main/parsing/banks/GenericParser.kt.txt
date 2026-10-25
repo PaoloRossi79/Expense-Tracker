@@ -1,0 +1,7 @@
+package com.example.expenses.importer.parsing.banks
+
+import com.example.expenses.importer.parsing.BankStatementParser
+import com.example.expenses.importer.parsing.GENERIC_PROFILE
+import com.example.expenses.importer.parsing.ProfileBasedParser
+
+object GenericParser : BankStatementParser by ProfileBasedParser(GENERIC_PROFILE)

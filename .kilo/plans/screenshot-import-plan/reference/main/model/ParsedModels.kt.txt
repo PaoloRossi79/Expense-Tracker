@@ -1,0 +1,25 @@
+package com.example.expenses.importer.model
+
+import java.time.LocalDate
+
+enum class Bank(val displayName: String) {
+    REVOLUT("Revolut"),
+    MONZO("Monzo"),
+    BARCLAYS("Barclays"),
+    CHASE("Chase"),
+    GENERIC("Other / generic"),
+}
+
+enum class TransactionKind { EXPENSE, INCOME }
+
+data class ParsedTransaction(
+    val date: LocalDate,
+    val vendor: String,          // cleaned by VendorCleaner, NOT yet Pascal-Cased
+    val amountMinor: Long,       // always positive, in pence (12.50 -> 1250)
+    val kind: TransactionKind,
+    val rawText: String,         // text of the source row, for debugging / review
+    val pending: Boolean = false,
+    val dateUncertain: Boolean = false,   // true when no date header/row date was found
+)
+
+data class ParseResult(val transactions: List<ParsedTransaction>, val warnings: List<String>)

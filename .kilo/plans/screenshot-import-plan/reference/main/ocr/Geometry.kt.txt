@@ -1,0 +1,6 @@
+package com.example.expenses.importer.ocr
+
+/** Angle in degrees of the vector (x0,y0)->(x1,y1). 0 = pointing right; positive = clockwise on screen. */
+fun angleDegrees(x0: Int, y0: Int, x1: Int, y1: Int): Float =
+    if (x0 == x1 && y0 == y1) 0f
+    else Math.toDegrees(Math.atan2((y1 - y0).toDouble(), (x1 - x0).toDouble())).toFloat()

@@ -1,0 +1,115 @@
+package com.example.expenses.importer
+
+import com.example.expenses.importer.model.Bank
+import com.example.expenses.importer.model.TransactionKind
+import com.example.expenses.importer.parsing.ParserRegistry
+import com.example.expenses.importer.testutil.BandDump
+import com.example.expenses.importer.testutil.ExpectedRow
+import com.example.expenses.importer.testutil.Fixtures
+import java.time.LocalDate
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.junit.runners.Parameterized
+
+@RunWith(Parameterized::class)
+class GoldenFixtureTest(private val name: String) {
+    companion object {
+        @JvmStatic
+        @Parameterized.Parameters(name = "{0}")
+        fun names(): List<String> = Fixtures.allNames()
+    }
+
+    @Test
+    fun parserMatchesExpectedFile() {
+        val ocr = Fixtures.loadOcr(name)
+        val expected = Fixtures.loadExpected(name)
+        val result = ParserRegistry.forBank(expected.bank).parse(ocr, expected.today)
+        val actual = result.transactions.map {
+            ExpectedRow(it.date, Fixtures.normaliseVendor(it.vendor), it.amountMinor, it.kind, it.pending, it.dateUncertain)
+        }
+        assertEquals(
+            buildString {
+                appendLine("Fixture: $name  bank=${expected.bank}  today=${expected.today}")
+                appendLine("Warnings: ${result.warnings}")
+                appendLine("--- bands seen by the parser ---")
+                appendLine(BandDump.format(ocr))
+            },
+            expected.rows,
+            actual,
+        )
+    }
+}
+
+@RunWith(Parameterized::class)
+class FixtureSafetyTest(private val name: String) {
+    companion object {
+        @JvmStatic
+        @Parameterized.Parameters(name = "{0}")
+        fun names(): List<String> = Fixtures.allNames()
+
+        private val PATTERNS: Map<String, Regex> = mapOf(
+            "sort code" to Regex("\\b\\d{2}-\\d{2}-\\d{2}\\b"),
+            "account number" to Regex("\\b\\d{8}\\b"),
+            "IBAN" to Regex("\\b[A-Z]{2}\\d{2}[A-Z0-9]{10,30}\\b"),
+            "email address" to Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"),
+            "UK mobile number" to Regex("\\b(?:\\+44\\s?|0)7\\d{3}\\s?\\d{6}\\b"),
+            "UK landline" to Regex("\\b0\\d{3,4}\\s?\\d{6,7}\\b"),
+            "card number" to Regex("\\b(?:\\d[ -]?){13,19}\\b"),
+        )
+    }
+
+    @Test
+    fun everyOcrFixtureHasAnExpectedFile() {
+        assertTrue("Missing $name.expected.txt", Fixtures.hasExpected(name))
+    }
+
+    @Test
+    fun fixtureLooksAnonymised() {
+        val text = Fixtures.wordTexts(name).joinToString(" ")
+        for ((label, regex) in PATTERNS) {
+            // The message names the pattern only; it must never print the matching text.
+            assertFalse("Fixture $name contains something that looks like a $label", regex.containsMatchIn(text))
+        }
+    }
+}
+
+class FixturesTest {
+    @Test
+    fun loadsSyntheticExpected() {
+        val e = Fixtures.loadExpected("generic/sample-synthetic")
+        assertEquals(3, e.rows.size)
+        assertEquals(LocalDate.of(2026, 10, 24), e.today)
+        assertEquals(Bank.GENERIC, e.bank)
+        assertEquals(TransactionKind.INCOME, e.rows[1].kind)
+        assertEquals(250000L, e.rows[1].amountMinor)
+    }
+
+    @Test
+    fun parsesFlags() {
+        val e = Fixtures.parseExpected(
+            """
+            # today: 2026-10-24
+            # bank: MONZO
+            # a comment
+            2026-10-22 | Costa | 3.40 | EXPENSE | PENDING,DATE_UNCERTAIN
+            2026-10-22 | Boots | 1.00 | EXPENSE
+            """.trimIndent(),
+        )
+        assertTrue(e.rows[0].pending); assertTrue(e.rows[0].dateUncertain)
+        assertFalse(e.rows[1].pending); assertFalse(e.rows[1].dateUncertain)
+        assertEquals("costa", e.rows[0].vendor)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun missingBankFails() {
+        Fixtures.parseExpected("# today: 2026-10-24\n2026-10-22 | A | 1.00 | EXPENSE")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun missingTodayFails() {
+        Fixtures.parseExpected("# bank: GENERIC\n2026-10-22 | A | 1.00 | EXPENSE")
+    }
+}

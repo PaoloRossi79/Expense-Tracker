@@ -1,0 +1,10 @@
+package com.example.expenses.importer.share
+
+import java.util.concurrent.atomic.AtomicReference
+
+class OneShotHolder<T : Any> {
+    private val value = AtomicReference<T?>(null)
+    fun set(item: T) { value.set(item) }
+    fun take(): T? = value.getAndSet(null)
+    fun hasValue(): Boolean = value.get() != null
+}

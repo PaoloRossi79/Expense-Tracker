@@ -1,0 +1,452 @@
+package com.example.expenses.importer.parsing
+
+import com.example.expenses.importer.model.Bank
+import com.example.expenses.importer.model.OcrBox
+import com.example.expenses.importer.model.OcrWord
+import com.example.expenses.importer.model.ParsedTransaction
+import com.example.expenses.importer.model.TransactionKind
+import com.example.expenses.importer.testutil.ocr
+import java.time.LocalDate
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ModelsTest {
+    @Test fun box() {
+        val b = OcrBox(10, 20, 110, 60)
+        assertEquals(100, b.width); assertEquals(40, b.height)
+        assertEquals(60.0, b.centerX, 0.0); assertEquals(40.0, b.centerY, 0.0)
+    }
+    @Test fun defaults() {
+        val t = ParsedTransaction(LocalDate.of(2026, 10, 24), "Tesco", 1250, TransactionKind.EXPENSE, "raw")
+        assertEquals(false, t.pending); assertEquals(false, t.dateUncertain)
+        assertEquals(0f, OcrWord("a", OcrBox(0, 0, 1, 1)).angleDeg)
+    }
+    @Test fun bank() {
+        assertEquals("Revolut", Bank.valueOf("REVOLUT").displayName)
+        assertEquals(5, Bank.values().size)
+    }
+}
+
+class AmountParserTest {
+    private fun check(input: String, minor: Long, sign: AmountSign) =
+        assertEquals(input, ParsedAmount(minor, sign), AmountParser.parse(input))
+
+    private fun none(input: String) = assertNull(input, AmountParser.parse(input))
+
+    @Test fun valid() {
+        check("£12.50", 1250, AmountSign.NONE)
+        check("-£12.50", 1250, AmountSign.MINUS)
+        check("−£12.50", 1250, AmountSign.MINUS)
+        check("– £ 12.50", 1250, AmountSign.MINUS)
+        check("+£1,234.56", 123456, AmountSign.PLUS)
+        check("£-3.00", 300, AmountSign.MINUS)
+        check("-E7.99", 799, AmountSign.MINUS)
+        check("12.50", 1250, AmountSign.NONE)
+        check("£0.00", 0, AmountSign.NONE)
+        check("£0.99", 99, AmountSign.NONE)
+    }
+
+    @Test fun invalid() {
+        listOf("£12", "£12.5", "£12.500", "€12.50", "$12.50", "£1,23.45", "2026", "23 Oct",
+            "Balance £12.50", "+-£1.00", "", "£99999999999999999999.00").forEach { none(it) }
+    }
+}
+
+class DateResolverTest {
+    private val today = LocalDate.of(2026, 10, 24)
+    private fun exact(input: String, expected: LocalDate?) = assertEquals(input, expected, DateResolver.parseExact(input, today))
+    private fun find(input: String, expected: LocalDate?) = assertEquals(input, expected, DateResolver.findIn(input, today))
+
+    @Test fun parseExactValid() {
+        exact("Today", today)
+        exact("YESTERDAY", LocalDate.of(2026, 10, 23))
+        exact("22 Oct", LocalDate.of(2026, 10, 22))
+        exact("Thu, 22 Oct", LocalDate.of(2026, 10, 22))
+        exact("Thursday 22 October", LocalDate.of(2026, 10, 22))
+        exact("22nd October 2025", LocalDate.of(2025, 10, 22))
+        exact("1 Sept", LocalDate.of(2026, 9, 1))
+        exact("October 22", LocalDate.of(2026, 10, 22))
+        exact("Oct 22nd, 2026", LocalDate.of(2026, 10, 22))
+        exact("28 Dec", LocalDate.of(2025, 12, 28))
+        exact("25 Oct", LocalDate.of(2026, 10, 25))
+        exact("26 Oct", LocalDate.of(2025, 10, 26))
+        exact("22/10/2026", LocalDate.of(2026, 10, 22))
+        exact("22/10/26", LocalDate.of(2026, 10, 22))
+        exact("22/10", LocalDate.of(2026, 10, 22))
+    }
+
+    @Test fun parseExactInvalid() {
+        listOf("30 Feb", "31/04/2026", "22 Market", "Tesco", "22 Oct Tesco", "1.05", "").forEach { exact(it, null) }
+    }
+
+    @Test fun findIn() {
+        find("22 Oct · Card payment", LocalDate.of(2026, 10, 22))
+        find("Card payment", null)
+        find("Today at 14:32", today)
+        find("Paid yesterday", LocalDate.of(2026, 10, 23))
+        find("Pending · 23 October", LocalDate.of(2026, 10, 23))
+        find("Order 22/10/2026", null)
+        find("Sat Nav Ltd", null)
+    }
+}
+
+class VendorCleanerTest {
+    private fun clean(raw: String, prefixes: List<String> = emptyList()) = VendorCleaner.clean(raw, prefixes)
+
+    @Test fun table() {
+        assertEquals("Tesco Stores", clean("  Tesco   Stores  "))
+        assertEquals("Tesco", clean("• Tesco"))
+        assertEquals("Tesco", clean("Tesco ›"))
+        assertEquals("Pret A Manger", clean("\"Pret A Manger\""))
+        assertEquals("M&S Simply Food", clean("M&S Simply Food"))
+        assertEquals("McDonald's", clean("McDonald's"))
+        assertEquals("Tesco", clean("Card payment to Tesco", listOf("Card payment to")))
+        assertEquals("tesco", clean("card payment to tesco", listOf("Card payment to")))
+        assertEquals("Tesco", clean("Card payment to: Tesco", listOf("Card payment to")))
+        assertEquals("Mr Smith", clean("Payment to Mr Smith", listOf("Payment", "Payment to")))
+        assertEquals("", clean("Card payment to", listOf("Card payment to")))
+        assertEquals("Card payments Ltd", clean("Card payments Ltd", listOf("Card payment")))
+        assertEquals("Tesco", clean("Card payment to  - Tesco", listOf("Card payment to")))
+        assertEquals("", clean("---"))
+        assertEquals("", clean(""))
+    }
+}
+
+class GeometryTest {
+    @Test fun angles() {
+        assertEquals(0f, com.example.expenses.importer.ocr.angleDegrees(0, 0, 100, 0), 0.01f)
+        assertEquals(45f, com.example.expenses.importer.ocr.angleDegrees(0, 0, 100, 100), 0.01f)
+        assertEquals(-45f, com.example.expenses.importer.ocr.angleDegrees(0, 0, 100, -100), 0.01f)
+        assertEquals(0f, com.example.expenses.importer.ocr.angleDegrees(5, 5, 5, 5), 0.01f)
+    }
+}
+
+class LayoutAnalyzerTest {
+    @Test fun empty() {
+        assertEquals(0, LayoutAnalyzer.buildBands(ocr { }).size)
+    }
+
+    @Test fun oneRowTwoSegments() {
+        val bands = LayoutAnalyzer.buildBands(ocr { row(400) { word("Tesco", 100); right("-£12.50") } })
+        assertEquals(1, bands.size)
+        assertEquals(listOf("Tesco", "-£12.50"), bands[0].segments.map { it.text })
+    }
+
+    @Test fun twoRowsTopFirst() {
+        val bands = LayoutAnalyzer.buildBands(ocr {
+            row(460) { word("Second", 100) }
+            row(400) { word("First", 100) }
+        })
+        assertEquals(listOf("First", "Second"), bands.map { it.text })
+    }
+
+    @Test fun reverseOrderInRow() {
+        val bands = LayoutAnalyzer.buildBands(ocr { row(400) { word("£12.50", 800); word("Tesco", 100) } })
+        assertEquals(listOf("Tesco", "£12.50"), bands[0].segments.map { it.text })
+    }
+
+    @Test fun phraseIsOneSegment() {
+        val bands = LayoutAnalyzer.buildBands(ocr { row(400) { words("Card payment", 100) } })
+        assertEquals(1, bands[0].segments.size)
+        assertEquals("Card payment", bands[0].segments[0].text)
+        assertEquals(100, bands[0].segments[0].box.left)
+        assertEquals(100 + 22 * 4 + 20 + 22 * 7, bands[0].segments[0].box.right)
+    }
+
+    @Test fun smallGapMerges() {
+        val bands = LayoutAnalyzer.buildBands(ocr { row(400) { word("-", 860); word("£12.50", 860 + 22 + 20) } })
+        assertEquals(1, bands[0].segments.size)
+        assertEquals("- £12.50", bands[0].segments[0].text)
+    }
+
+    @Test fun bigGapSplits() {
+        val bands = LayoutAnalyzer.buildBands(ocr { row(400) { word("a", 100); word("b", 500) } })
+        assertEquals(2, bands[0].segments.size)
+    }
+
+    @Test fun bandTolerance() {
+        val same = LayoutAnalyzer.buildBands(ocr { row(400) { word("a", 100) }; row(410) { word("b", 300) } })
+        assertEquals(1, same.size)
+        val different = LayoutAnalyzer.buildBands(ocr { row(400) { word("a", 100) }; row(440) { word("b", 300) } })
+        assertEquals(2, different.size)
+    }
+}
+
+class ProfileBasedParserTest {
+    private val today = LocalDate.of(2026, 10, 24)
+
+    private fun run(profile: ParserProfile = GENERIC_PROFILE, block: com.example.expenses.importer.testutil.OcrBuilder.() -> Unit) =
+        ProfileBasedParser(profile).parse(ocr(block = block), today)
+
+    private fun com.example.expenses.importer.model.ParseResult.rows() =
+        transactions.map { "${it.date} ${it.vendor} ${it.amountMinor} ${it.kind}" }
+
+    // ---------------- T07 ----------------
+
+    @Test fun basicGrouping() {
+        val r = run {
+            row(300) { word("Today", 40) }
+            row(400) { word("Tesco", 160); right("-£12.50") }
+            row(457) { word("Groceries", 160) }
+            row(580) { word("Yesterday", 40) }
+            row(680) { word("Salary", 160); right("+£2,500.00") }
+            row(780) { word("Costa", 160); right("-£3.40") }
+        }
+        assertEquals(
+            listOf("2026-10-24 Tesco 1250 EXPENSE", "2026-10-23 Salary 250000 INCOME", "2026-10-23 Costa 340 EXPENSE"),
+            r.rows(),
+        )
+        assertEquals(emptyList<String>(), r.warnings)
+    }
+
+    @Test fun unsignedIsIncome() {
+        val r = run(GENERIC_PROFILE.copy(incomeRule = IncomeRule.UNSIGNED_IS_INCOME)) {
+            row(400) { word("A", 160); right("-£12.50") }
+            row(500) { word("B", 160); right("£5.00") }
+            row(600) { word("C", 160); right("+£100.00") }
+        }
+        assertEquals(listOf(TransactionKind.EXPENSE, TransactionKind.INCOME, TransactionKind.INCOME), r.transactions.map { it.kind })
+    }
+
+    @Test fun plusMarksIncomeDefault() {
+        val r = run { row(400) { word("A", 160); right("£5.00") } }
+        assertEquals(TransactionKind.EXPENSE, r.transactions.single().kind)
+    }
+
+    @Test fun noHeaderAboveFirstRow() {
+        val r = run {
+            row(400) { word("A", 160); right("-£1.00") }
+            row(500) { word("Yesterday", 40) }
+            row(600) { word("B", 160); right("-£2.00") }
+        }
+        assertEquals(today, r.transactions[0].date)
+        assertTrue(r.transactions[0].dateUncertain)
+        assertEquals(today.minusDays(1), r.transactions[1].date)
+        assertEquals(false, r.transactions[1].dateUncertain)
+        assertTrue(r.warnings.contains("Dates above the first date header are unknown; today's date was used"))
+    }
+
+    @Test fun foreignCurrency() {
+        val r = run { row(400) { word("Cafe", 160); right("€12.00") } }
+        assertEquals(0, r.transactions.size)
+        assertTrue(r.warnings.contains("Skipped 1 non-GBP amount(s)"))
+        assertTrue(r.warnings.contains("No transactions found"))
+    }
+
+    @Test fun balanceIgnored() {
+        val r = run { row(400) { word("Balance", 160); right("£1,234.56") } }
+        assertEquals(0, r.transactions.size)
+        assertTrue(r.warnings.none { it.contains("no vendor") })
+    }
+
+    @Test fun zeroAmount() {
+        val r = run { row(400) { word("Refund", 160); right("£0.00") } }
+        assertEquals(0, r.transactions.size)
+        assertTrue(r.warnings.contains("Skipped 1 zero amount(s)"))
+    }
+
+    @Test fun headerWithDailyTotal() {
+        val r = run {
+            row(300) { word("Today", 40); right("£45.00") }
+            row(400) { word("Tesco", 160); right("-£3.00") }
+        }
+        val t = r.transactions.single()
+        assertEquals("Tesco", t.vendor); assertEquals(today, t.date); assertEquals(false, t.dateUncertain)
+    }
+
+    @Test fun amountInLeftHalfIsNotAnchor() {
+        val r = run { row(400) { word("Save", 100); word("£5.00", 300) } }
+        assertEquals(0, r.transactions.size)
+    }
+
+    @Test fun vendorPrefix() {
+        val r = run(GENERIC_PROFILE.copy(vendorNoisePrefixes = listOf("Card payment to"))) {
+            row(400) { words("Card payment to Tesco", 160); right("-£12.50") }
+        }
+        assertEquals("Tesco", r.transactions.single().vendor)
+    }
+
+    @Test fun multiWordVendor() {
+        val r = run { row(400) { words("Pret A Manger", 160); right("-£4.50") } }
+        assertEquals("Pret A Manger", r.transactions.single().vendor)
+    }
+
+    @Test fun noVendor() {
+        val r = run { row(400) { right("-£5.00") } }
+        assertEquals(0, r.transactions.size)
+        assertTrue(r.warnings.contains("Skipped 1 amount(s) with no vendor name"))
+    }
+
+    @Test fun customIgnoreRegex() {
+        val profile = GENERIC_PROFILE.copy(ignoreVendorRegexes = DEFAULT_IGNORE_VENDOR_REGEXES + Regex("^To .* pot$"))
+        val r = run(profile) { row(400) { words("To Holiday pot", 160); right("-£50.00") } }
+        assertEquals(0, r.transactions.size)
+    }
+
+    @Test fun unreadableAmount() {
+        val r = run { row(400) { word("Tesco", 160); right("-£12.5") } }
+        assertEquals(0, r.transactions.size)
+    }
+
+    @Test fun emptyOcr() {
+        val r = run { }
+        assertEquals(0, r.transactions.size)
+        assertEquals(listOf("No transactions found"), r.warnings)
+    }
+
+    @Test fun postProcessHook() {
+        val parser = ProfileBasedParser(GENERIC_PROFILE) { list -> list.filter { it.vendor != "X" } }
+        val r = parser.parse(ocr {
+            row(400) { word("X", 160); right("-£1.00") }
+            row(500) { word("Y", 160); right("-£2.00") }
+        }, today)
+        assertEquals(listOf("Y"), r.transactions.map { it.vendor })
+    }
+
+    @Test fun multipleRowsUnderOneHeader() {
+        val r = run {
+            row(300) { word("22 Oct", 40) }
+            row(400) { word("A", 160); right("-£1.00") }
+            row(500) { word("B", 160); right("-£2.00") }
+            row(600) { word("C", 160); right("-£3.00") }
+        }
+        assertEquals(listOf("A", "B", "C"), r.transactions.map { it.vendor })
+        assertTrue(r.transactions.all { it.date == LocalDate.of(2026, 10, 22) })
+    }
+
+    // ---------------- T08 ----------------
+
+    private val perRow = GENERIC_PROFILE.copy(dateSource = DateSource.PER_ROW)
+
+    @Test fun perRowDateBelow() {
+        val r = run(perRow) {
+            row(400) { word("Tesco", 160); right("-£12.50") }
+            row(457) { words("22 Oct · Card payment", 160) }
+        }
+        val t = r.transactions.single()
+        assertEquals(LocalDate.of(2026, 10, 22), t.date); assertEquals(false, t.dateUncertain)
+    }
+
+    @Test fun perRowLookaheadLimit() {
+        val found = run(perRow) {
+            row(400) { word("Tesco", 160); right("-£12.50") }
+            row(457) { words("Card payment", 160) }
+            row(514) { words("22 Oct", 160) }
+        }
+        assertEquals(LocalDate.of(2026, 10, 22), found.transactions.single().date)
+        val missing = run(perRow) {
+            row(400) { word("Tesco", 160); right("-£12.50") }
+            row(457) { words("Card payment", 160) }
+            row(514) { words("Groceries", 160) }
+            row(571) { words("22 Oct", 160) }
+        }
+        assertEquals(today, missing.transactions.single().date)
+        assertTrue(missing.transactions.single().dateUncertain)
+    }
+
+    @Test fun perRowStopsAtNextAmount() {
+        val r = run(perRow) {
+            row(400) { word("First", 160); right("-£1.00") }
+            row(520) { word("Second", 160); right("-£2.00") }
+            row(577) { words("22 Oct", 160) }
+        }
+        assertEquals(today, r.transactions[0].date); assertTrue(r.transactions[0].dateUncertain)
+        assertEquals(LocalDate.of(2026, 10, 22), r.transactions[1].date)
+        assertEquals(false, r.transactions[1].dateUncertain)
+    }
+
+    @Test fun perRowIgnoresHeaders() {
+        val r = run(perRow) { row(300) { word("Today", 40) } }
+        assertEquals(0, r.transactions.size)
+    }
+
+    private val pendingProfile = GENERIC_PROFILE.copy(pendingRegex = Regex("(?i)\\bpending\\b"))
+
+    @Test fun pendingFlag() {
+        val r = run(pendingProfile) {
+            row(300) { word("Today", 40) }
+            row(400) { word("A", 160); right("-£1.00") }
+            row(457) { word("Pending", 160) }
+            row(560) { word("B", 160); right("-£2.00") }
+        }
+        assertEquals(listOf(true, false), r.transactions.map { it.pending })
+    }
+
+    @Test fun pendingUnderSecondOnly() {
+        val r = run(pendingProfile) {
+            row(400) { word("A", 160); right("-£1.00") }
+            row(520) { word("B", 160); right("-£2.00") }
+            row(577) { word("Pending", 160) }
+        }
+        assertEquals(listOf(false, true), r.transactions.map { it.pending })
+    }
+
+    private val avatar = GENERIC_PROFILE.copy(avatarColumnFraction = 0.15)
+
+    @Test fun avatarFilter() {
+        val r = run(avatar) { row(400) { word("T", 40); word("Tesco", 160); right("-£12.50") } }
+        assertEquals("Tesco", r.transactions.single().vendor)
+        val off = run { row(400) { word("T", 40); word("Tesco", 160); right("-£12.50") } }
+        assertEquals("T Tesco", off.transactions.single().vendor)
+    }
+
+    @Test fun avatarKeepsDigitHeaders() {
+        val r = run(avatar) {
+            row(300) { words("5 Oct", 40) }
+            row(400) { word("Tesco", 160); right("-£12.50") }
+        }
+        assertEquals(LocalDate.of(2026, 10, 5), r.transactions.single().date)
+        assertEquals(false, r.transactions.single().dateUncertain)
+    }
+
+    @Test fun avatarKeepsShortVendorRightOfZone() {
+        val r = run(avatar) { row(400) { word("BP", 170); right("-£30.00") } }
+        assertEquals("BP", r.transactions.single().vendor)
+    }
+}
+
+class ParserRegistryTest {
+    @Test fun everyBankHasAParser() {
+        Bank.values().forEach { assertNotNull(ParserRegistry.forBank(it)) }
+    }
+}
+
+class PostProcessorsTest {
+    private val d = LocalDate.of(2026, 10, 24)
+    private fun t(vendor: String, kind: TransactionKind = TransactionKind.EXPENSE) =
+        ParsedTransaction(d, vendor, 100, kind, "raw")
+
+    @Test fun markAsIncome() {
+        val out = PostProcessors.markAsIncome(Regex("(?i)refund"))(listOf(t("Refund Boots"), t("Tesco")))
+        assertEquals(listOf(TransactionKind.INCOME, TransactionKind.EXPENSE), out.map { it.kind })
+    }
+
+    @Test fun dropVendors() {
+        val out = PostProcessors.dropVendors(Regex("^Pot "))(listOf(t("Pot Holiday"), t("Potters")))
+        assertEquals(listOf("Potters"), out.map { it.vendor })
+    }
+
+    @Test fun stripFromVendor() {
+        val out = PostProcessors.stripFromVendor(Regex("\\s+\\d{3,}$"))(listOf(t("Tesco Stores 3456"), t(" 12345")))
+        assertEquals(listOf("Tesco Stores"), out.map { it.vendor })
+    }
+
+    @Test fun chainAppliesInOrder() {
+        val strip = PostProcessors.stripFromVendor(Regex("^Pot "))
+        val drop = PostProcessors.dropVendors(Regex("^Holiday$"))
+        assertEquals(emptyList<String>(), PostProcessors.chain(strip, drop)(listOf(t("Pot Holiday"))).map { it.vendor })
+        assertEquals(listOf("Holiday"), PostProcessors.chain(drop, strip)(listOf(t("Pot Holiday"))).map { it.vendor })
+    }
+
+    @Test fun usageExample() {
+        val parser = ProfileBasedParser(GENERIC_PROFILE, PostProcessors.dropVendors(Regex("^X$")))
+        val r = parser.parse(ocr {
+            row(400) { word("X", 160); right("-£1.00") }
+            row(500) { word("Y", 160); right("-£2.00") }
+        }, d)
+        assertEquals(listOf("Y"), r.transactions.map { it.vendor })
+    }
+}

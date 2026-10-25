@@ -1,0 +1,161 @@
+package com.example.expenses.importer.ui
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.expenses.importer.domain.CategoryRef
+import com.example.expenses.importer.domain.CategorySource
+import com.example.expenses.importer.domain.ImportService
+import com.example.expenses.importer.domain.LastBankStore
+import com.example.expenses.importer.domain.ReviewItem
+import com.example.expenses.importer.model.Bank
+import com.example.expenses.importer.model.ImageRef
+import com.example.expenses.importer.model.OcrResult
+import com.example.expenses.importer.model.TransactionKind
+import com.example.expenses.importer.ocr.OcrEngine
+import java.time.Clock
+import java.time.LocalDate
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
+
+class ImportViewModel(
+    private val ocr: OcrEngine,
+    private val service: ImportService,
+    private val categorySource: CategorySource,
+    private val lastBank: LastBankStore,
+    private val clock: Clock = Clock.systemDefaultZone(),
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(ImportUiState(bank = lastBank.get() ?: Bank.GENERIC))
+    val state: StateFlow<ImportUiState> = _state.asStateFlow()
+
+    /** Only the recognised words are kept (needed to re-parse after a bank change). The image itself is never kept. */
+    private var cachedOcr: OcrResult? = null
+
+    fun onBankSelected(bank: Bank) {
+        lastBank.set(bank)
+        _state.update { it.copy(bank = bank) }
+        val cached = cachedOcr
+        if (cached != null && _state.value.phase == Phase.REVIEW) {
+            _state.update { it.copy(phase = Phase.WORKING, error = null) }
+            viewModelScope.launch { prepareFrom(cached) }
+        }
+    }
+
+    fun onIncludeIncomeChanged(value: Boolean) {
+        _state.update { it.copy(includeIncome = value) }
+    }
+
+    fun onImagePicked(image: ImageRef) {
+        _state.update { it.copy(phase = Phase.WORKING, error = null) }
+        viewModelScope.launch {
+            val recognised = try {
+                ocr.recognise(image)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failToPick()
+                return@launch
+            }
+            cachedOcr = recognised
+            prepareFrom(recognised)
+        }
+    }
+
+    fun onSharedImage(image: ImageRef) = onImagePicked(image)
+
+    fun onItemChanged(id: Int, transform: (ReviewItem) -> ReviewItem) {
+        _state.update { s -> s.copy(items = s.items.map { if (it.id == id) transform(it) else it }) }
+    }
+
+    fun onToggleSelected(id: Int) {
+        onItemChanged(id) { it.copy(selected = !it.selected) }
+    }
+
+    fun onSelectAllVisible(selected: Boolean) {
+        _state.update { s ->
+            s.copy(items = s.items.map { if (s.includeIncome || it.kind == TransactionKind.EXPENSE) it.copy(selected = selected) else it })
+        }
+    }
+
+    fun onApplyCategoryToMissing(category: CategoryRef) {
+        _state.update { s ->
+            val visibleIds = s.visibleItems.map { it.id }.toSet()
+            s.copy(items = s.items.map {
+                if (it.id in visibleIds && it.selected && it.category == null && it.kind == category.kind) it.copy(category = category) else it
+            })
+        }
+    }
+
+    fun onConfirmImport() {
+        val s = _state.value
+        if (s.phase != Phase.REVIEW) return
+        if (s.importable.isEmpty()) {
+            _state.update { it.copy(error = "Nothing selected") }
+            return
+        }
+        if (s.missingCategoryCount > 0) {
+            _state.update { it.copy(error = "Choose a category for ${s.missingCategoryCount} item(s)") }
+            return
+        }
+        _state.update { it.copy(phase = Phase.SAVING, error = null) }
+        viewModelScope.launch {
+            try {
+                val result = service.commit(s.importable)
+                if (result.saved == 0 && result.failed > 0) {
+                    _state.update { it.copy(phase = Phase.REVIEW, error = SAVE_ERROR) }
+                } else {
+                    _state.update { it.copy(phase = Phase.DONE, result = result) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(phase = Phase.REVIEW, error = SAVE_ERROR) }
+            }
+        }
+    }
+
+    fun onStartOver() {
+        cachedOcr = null
+        _state.update { it.copy(phase = Phase.PICK, items = emptyList(), warnings = emptyList(), error = null, result = null) }
+    }
+
+    fun onErrorShown() {
+        _state.update { it.copy(error = null) }
+    }
+
+    private suspend fun prepareFrom(recognised: OcrResult) {
+        try {
+            val prepared = service.prepare(recognised, _state.value.bank, LocalDate.now(clock))
+            val expense = categorySource.list(TransactionKind.EXPENSE)
+            val income = categorySource.list(TransactionKind.INCOME)
+            _state.update {
+                it.copy(
+                    phase = Phase.REVIEW,
+                    items = prepared.items,
+                    warnings = prepared.warnings,
+                    expenseCategories = expense,
+                    incomeCategories = income,
+                    error = null,
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            failToPick()
+        }
+    }
+
+    private fun failToPick() {
+        cachedOcr = null
+        _state.update { it.copy(phase = Phase.PICK, items = emptyList(), error = READ_ERROR) }
+    }
+
+    private companion object {
+        const val READ_ERROR = "Could not read this image. Try another screenshot or a different bank."
+        const val SAVE_ERROR = "Saving failed. Nothing was saved; try again."
+    }
+}

@@ -1,0 +1,143 @@
+package com.example.expenses.importer.parsing
+
+import com.example.expenses.importer.model.Bank
+import com.example.expenses.importer.model.OcrResult
+import com.example.expenses.importer.model.ParseResult
+import com.example.expenses.importer.model.ParsedTransaction
+import com.example.expenses.importer.model.TransactionKind
+import java.time.LocalDate
+
+class ProfileBasedParser(
+    private val profile: ParserProfile,
+    private val postProcess: (List<ParsedTransaction>) -> List<ParsedTransaction> = { it },
+) : BankStatementParser {
+
+    override val bank: Bank get() = profile.bank
+
+    override fun parse(ocr: OcrResult, today: LocalDate): ParseResult {
+        val source = withoutAvatars(ocr)
+        val bands = LayoutAnalyzer.buildBands(source, profile.bandTolerance, profile.segmentGapFactor)
+        val amountZoneLeft = profile.minAmountLeftFraction * source.imageWidth
+
+        var currentDate: LocalDate? = null
+        var skippedNoVendor = 0
+        var skippedForeign = 0
+        var skippedZero = 0
+        val results = mutableListOf<ParsedTransaction>()
+
+        for ((index, band) in bands.withIndex()) {
+            val last = band.segments.last()
+            val inAmountZone = last.box.left >= amountZoneLeft
+            val amount = if (inAmountZone) AmountParser.parse(last.text) else null
+
+            if (inAmountZone && amount == null &&
+                FOREIGN_AMOUNT.matches(last.text.filter { !it.isWhitespace() })
+            ) {
+                skippedForeign++
+                continue
+            }
+            if (amount == null) {
+                if (profile.dateSource == DateSource.SECTION_HEADER) {
+                    DateResolver.parseExact(band.text, today)?.let { currentDate = it }
+                }
+                continue
+            }
+
+            val vendorRaw = band.segments.dropLast(1).joinToString(" ") { it.text }
+            if (profile.dateSource == DateSource.SECTION_HEADER) {
+                val headerDate = DateResolver.parseExact(vendorRaw, today)
+                if (headerDate != null) {      // a date header that also shows a daily total
+                    currentDate = headerDate
+                    continue
+                }
+            }
+
+            val vendor = VendorCleaner.clean(vendorRaw, profile.vendorNoisePrefixes)
+            if (vendor.isBlank()) {
+                skippedNoVendor++
+                continue
+            }
+            if (profile.ignoreVendorRegexes.any { it.containsMatchIn(vendor) }) continue
+            if (amount.minor == 0L) {
+                skippedZero++
+                continue
+            }
+
+            val below = bandsBelow(bands, index, amountZoneLeft)
+
+            val date: LocalDate
+            val uncertain: Boolean
+            when (profile.dateSource) {
+                DateSource.SECTION_HEADER -> {
+                    date = currentDate ?: today
+                    uncertain = currentDate == null
+                }
+                DateSource.PER_ROW -> {
+                    val found = below.firstNotNullOfOrNull { DateResolver.findIn(it.text, today) }
+                    date = found ?: today
+                    uncertain = found == null
+                }
+            }
+            val pending = profile.pendingRegex?.let { rx -> below.any { rx.containsMatchIn(it.text) } } ?: false
+
+            results += ParsedTransaction(
+                date = date,
+                vendor = vendor,
+                amountMinor = amount.minor,
+                kind = kindOf(amount.sign),
+                rawText = band.text,
+                pending = pending,
+                dateUncertain = uncertain,
+            )
+        }
+
+        val finalResults = postProcess(results)
+        val warnings = buildList {
+            if (finalResults.isEmpty()) add("No transactions found")
+            if (finalResults.any { it.dateUncertain }) {
+                add("Dates above the first date header are unknown; today's date was used")
+            }
+            if (skippedNoVendor > 0) add("Skipped $skippedNoVendor amount(s) with no vendor name")
+            if (skippedForeign > 0) add("Skipped $skippedForeign non-GBP amount(s)")
+            if (skippedZero > 0) add("Skipped $skippedZero zero amount(s)")
+        }
+        return ParseResult(finalResults, warnings)
+    }
+
+    /** The bands under row [index] that may hold its date or "pending" label (stops at the next amount row). */
+    private fun bandsBelow(bands: List<Band>, index: Int, amountZoneLeft: Double): List<Band> {
+        val out = mutableListOf<Band>()
+        var i = index + 1
+        while (i < bands.size && out.size < profile.subtitleLookahead) {
+            if (isAmountBand(bands[i], amountZoneLeft)) break
+            out += bands[i]
+            i++
+        }
+        return out
+    }
+
+    private fun isAmountBand(band: Band, amountZoneLeft: Double): Boolean {
+        val last = band.segments.last()
+        return last.box.left >= amountZoneLeft && AmountParser.parse(last.text) != null
+    }
+
+    /** Drops 1-2 letter words in the left avatar column (initials in a coloured circle). */
+    private fun withoutAvatars(ocr: OcrResult): OcrResult {
+        if (profile.avatarColumnFraction <= 0.0) return ocr
+        val limit = profile.avatarColumnFraction * ocr.imageWidth
+        val kept = ocr.words.filterNot { it.text.length <= 2 && it.text.any(Char::isLetter) && it.box.right <= limit }
+        return ocr.copy(words = kept)
+    }
+
+    private fun kindOf(sign: AmountSign): TransactionKind = when (profile.incomeRule) {
+        IncomeRule.PLUS_MARKS_INCOME ->
+            if (sign == AmountSign.PLUS) TransactionKind.INCOME else TransactionKind.EXPENSE
+        IncomeRule.UNSIGNED_IS_INCOME ->
+            if (sign == AmountSign.MINUS) TransactionKind.EXPENSE else TransactionKind.INCOME
+    }
+
+    private companion object {
+        val FOREIGN_AMOUNT =
+            Regex("^[+\\-\\u2212\\u2013\\u2014]?[€$¥][+\\-\\u2212\\u2013\\u2014]?\\d[\\d,]*(\\.\\d+)?$")
+    }
+}

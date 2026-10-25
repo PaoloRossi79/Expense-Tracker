@@ -1,0 +1,8 @@
+package com.example.expenses.importer.domain
+
+import com.example.expenses.importer.model.Bank
+
+interface LastBankStore {
+    fun get(): Bank?
+    fun set(bank: Bank)
+}

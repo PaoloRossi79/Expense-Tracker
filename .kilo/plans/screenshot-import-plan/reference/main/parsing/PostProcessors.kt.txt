@@ -1,0 +1,27 @@
+package com.example.expenses.importer.parsing
+
+import com.example.expenses.importer.model.ParsedTransaction
+import com.example.expenses.importer.model.TransactionKind
+
+object PostProcessors {
+    /** Marks rows whose vendor matches [regex] as INCOME (e.g. refunds that carry no '+' sign). */
+    fun markAsIncome(regex: Regex): (List<ParsedTransaction>) -> List<ParsedTransaction> = { list ->
+        list.map { if (regex.containsMatchIn(it.vendor)) it.copy(kind = TransactionKind.INCOME) else it }
+    }
+
+    /** Removes rows whose vendor matches [regex]. */
+    fun dropVendors(regex: Regex): (List<ParsedTransaction>) -> List<ParsedTransaction> = { list ->
+        list.filterNot { regex.containsMatchIn(it.vendor) }
+    }
+
+    /** Removes [regex] matches from the vendor text (e.g. trailing store numbers or location codes). */
+    fun stripFromVendor(regex: Regex): (List<ParsedTransaction>) -> List<ParsedTransaction> = { list ->
+        list.map { it.copy(vendor = it.vendor.replace(regex, "").trim().replace(Regex("\\s+"), " ")) }
+            .filter { it.vendor.isNotBlank() }
+    }
+
+    /** Applies several post-processors in order. */
+    fun chain(
+        vararg steps: (List<ParsedTransaction>) -> List<ParsedTransaction>,
+    ): (List<ParsedTransaction>) -> List<ParsedTransaction> = { list -> steps.fold(list) { acc, step -> step(acc) } }
+}

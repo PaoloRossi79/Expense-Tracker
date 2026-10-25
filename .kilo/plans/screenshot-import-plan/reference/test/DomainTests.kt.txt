@@ -1,0 +1,489 @@
+package com.example.expenses.importer
+
+import com.example.expenses.importer.dedupe.DuplicateDetector
+import com.example.expenses.importer.dedupe.DuplicateStatus
+import com.example.expenses.importer.dedupe.ExistingTx
+import com.example.expenses.importer.domain.CategoryRef
+import com.example.expenses.importer.domain.CategorySource
+import com.example.expenses.importer.domain.CommitResult
+import com.example.expenses.importer.domain.ExistingTransactionsSource
+import com.example.expenses.importer.domain.ImportService
+import com.example.expenses.importer.domain.LastBankStore
+import com.example.expenses.importer.domain.NewTransaction
+import com.example.expenses.importer.domain.ReviewItem
+import com.example.expenses.importer.domain.TransactionWriter
+import com.example.expenses.importer.domain.VendorCategoryLookup
+import com.example.expenses.importer.domain.VendorNameNormalizer
+import com.example.expenses.importer.model.Bank
+import com.example.expenses.importer.model.ImageRef
+import com.example.expenses.importer.model.OcrResult
+import com.example.expenses.importer.model.ParseResult
+import com.example.expenses.importer.model.ParsedTransaction
+import com.example.expenses.importer.model.TransactionKind
+import com.example.expenses.importer.ocr.OcrEngine
+import com.example.expenses.importer.parsing.BankStatementParser
+import com.example.expenses.importer.share.OneShotHolder
+import com.example.expenses.importer.testutil.Fixtures
+import com.example.expenses.importer.ui.ImportViewModel
+import com.example.expenses.importer.ui.Phase
+import com.example.expenses.importer.ui.formatMinor
+import com.example.expenses.importer.ui.parseMinor
+import java.time.Clock
+import java.time.LocalDate
+import java.time.ZoneOffset
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import kotlin.coroutines.cancellation.CancellationException
+
+private val D = LocalDate.of(2026, 10, 20)
+private fun p(date: LocalDate, vendor: String, minor: Long, kind: TransactionKind = TransactionKind.EXPENSE, pending: Boolean = false) =
+    ParsedTransaction(date, vendor, minor, kind, "raw", pending = pending)
+private fun e(date: LocalDate, vendor: String, minor: Long, kind: TransactionKind = TransactionKind.EXPENSE) =
+    ExistingTx(date, minor, kind, vendor)
+
+class DuplicateDetectorTest {
+    private fun detect(parsed: List<ParsedTransaction>, existing: List<ExistingTx>) = DuplicateDetector.detect(parsed, existing)
+
+    @Test fun empty() {
+        assertEquals(listOf(DuplicateStatus.NONE, DuplicateStatus.NONE), detect(listOf(p(D, "A", 1), p(D, "B", 2)), emptyList()))
+        assertEquals(emptyList<DuplicateStatus>(), detect(emptyList(), listOf(e(D, "A", 1))))
+    }
+
+    @Test fun likelyAndPossible() {
+        assertEquals(listOf(DuplicateStatus.LIKELY), detect(listOf(p(D, "Tesco", 400)), listOf(e(D, "Tesco", 400))))
+        assertEquals(listOf(DuplicateStatus.POSSIBLE), detect(listOf(p(D, "Tesco", 400)), listOf(e(D, "Boots", 400))))
+    }
+
+    @Test fun dateTolerance() {
+        assertEquals(listOf(DuplicateStatus.POSSIBLE), detect(listOf(p(D, "Tesco", 400)), listOf(e(D.plusDays(1), "Tesco", 400))))
+        assertEquals(listOf(DuplicateStatus.POSSIBLE), detect(listOf(p(D, "Tesco", 400)), listOf(e(D.minusDays(1), "Tesco", 400))))
+        assertEquals(listOf(DuplicateStatus.NONE), detect(listOf(p(D, "Tesco", 400)), listOf(e(D.plusDays(2), "Tesco", 400))))
+    }
+
+    @Test fun amountAndKind() {
+        assertEquals(listOf(DuplicateStatus.NONE), detect(listOf(p(D, "Tesco", 400)), listOf(e(D, "Tesco", 401))))
+        assertEquals(listOf(DuplicateStatus.NONE), detect(listOf(p(D, "Tesco", 400)), listOf(e(D, "Tesco", 400, TransactionKind.INCOME))))
+    }
+
+    @Test fun multiset() {
+        assertEquals(
+            listOf(DuplicateStatus.LIKELY, DuplicateStatus.NONE),
+            detect(listOf(p(D, "Tesco", 400), p(D, "Tesco", 400)), listOf(e(D, "Tesco", 400))),
+        )
+        assertEquals(
+            listOf(DuplicateStatus.LIKELY),
+            detect(listOf(p(D, "Tesco", 400)), listOf(e(D, "Tesco", 400), e(D, "Tesco", 400))),
+        )
+    }
+
+    @Test fun fuzzy() {
+        assertEquals(listOf(DuplicateStatus.LIKELY), detect(listOf(p(D, "Tesco Stores 3456", 400)), listOf(e(D, "Tesco", 400))))
+        assertEquals(listOf(DuplicateStatus.LIKELY), detect(listOf(p(D, "K F C", 400)), listOf(e(D, "KFC", 400))))
+        assertEquals(listOf(DuplicateStatus.POSSIBLE), detect(listOf(p(D, "BP", 400)), listOf(e(D, "Bpost", 400))))
+    }
+
+    @Test fun passPriority() {
+        assertEquals(
+            listOf(DuplicateStatus.NONE, DuplicateStatus.LIKELY),
+            detect(listOf(p(D, "Costa", 400), p(D, "Tesco", 400)), listOf(e(D, "Tesco", 400))),
+        )
+    }
+
+    @Test fun differentYear() {
+        assertEquals(listOf(DuplicateStatus.NONE), detect(listOf(p(D, "Tesco", 400)), listOf(e(D.minusYears(1), "Tesco", 400))))
+    }
+}
+
+// ---------------- fakes shared by service / view model tests ----------------
+
+private class FakeParser(private val result: ParseResult) : BankStatementParser {
+    override val bank = Bank.GENERIC
+    override fun parse(ocr: OcrResult, today: LocalDate) = result
+}
+
+private class FakeExisting(var list: List<ExistingTx> = emptyList(), var fail: Boolean = false) : ExistingTransactionsSource {
+    var calls = 0
+    var lastRange: Pair<LocalDate, LocalDate>? = null
+    override suspend fun between(from: LocalDate, to: LocalDate): List<ExistingTx> {
+        calls++
+        lastRange = from to to
+        if (fail) throw IllegalStateException("boom")
+        return list
+    }
+}
+
+private class FakeLookup(val map: Map<String, CategoryRef> = emptyMap()) : VendorCategoryLookup {
+    val asked = mutableListOf<Pair<String, TransactionKind>>()
+    override suspend fun categoryFor(vendor: String, kind: TransactionKind): CategoryRef? {
+        asked += vendor to kind
+        return map[vendor]
+    }
+}
+
+private class FakeWriter(val failOnCall: Set<Int> = emptySet(), val cancelOnCall: Int? = null) : TransactionWriter {
+    val written = mutableListOf<NewTransaction>()
+    private var calls = 0
+    override suspend fun add(tx: NewTransaction) {
+        calls++
+        if (cancelOnCall == calls) throw CancellationException("cancel")
+        if (calls in failOnCall) throw IllegalStateException("fail")
+        written += tx
+    }
+}
+
+private val groceries = CategoryRef("c1", "Groceries", TransactionKind.EXPENSE)
+private val eatingOut = CategoryRef("c2", "Eating out", TransactionKind.EXPENSE)
+private val salaryCat = CategoryRef("c3", "Salary", TransactionKind.INCOME)
+private val upper = VendorNameNormalizer { raw -> raw.split(" ").joinToString(" ") { it.lowercase().replaceFirstChar(Char::titlecase) } }
+private val emptyOcr = OcrResult(1080, 2400, emptyList())
+
+private fun service(
+    parsed: ParseResult,
+    existing: FakeExisting = FakeExisting(),
+    lookup: FakeLookup = FakeLookup(),
+    normaliser: VendorNameNormalizer = upper,
+    writer: FakeWriter = FakeWriter(),
+) = ImportService(existing, lookup, normaliser, writer, parserFor = { FakeParser(parsed) })
+
+class ImportServicePrepareTest {
+    private val today = LocalDate.of(2026, 10, 24)
+
+    @Test fun mapsFieldsInOrder() = runBlocking {
+        val parsed = ParseResult(listOf(p(D, "tesco", 400), p(D.plusDays(1), "costa", 350, TransactionKind.EXPENSE)), listOf("w1"))
+        val prepared = service(parsed).prepare(emptyOcr, Bank.GENERIC, today)
+        assertEquals(listOf(0, 1), prepared.items.map { it.id })
+        assertEquals(listOf("Tesco", "Costa"), prepared.items.map { it.vendor })
+        assertEquals(listOf(400L, 350L), prepared.items.map { it.amountMinor })
+        assertEquals(listOf("w1"), prepared.warnings)
+    }
+
+    @Test fun blankNormaliserFallsBack() = runBlocking {
+        val prepared = service(ParseResult(listOf(p(D, "tesco", 400)), emptyList()), normaliser = { "" }).prepare(emptyOcr, Bank.GENERIC, today)
+        assertEquals("tesco", prepared.items.single().vendor)
+    }
+
+    @Test fun lookupGetsNormalisedVendorAndKind() = runBlocking {
+        val lookup = FakeLookup(mapOf("Tesco" to groceries))
+        val parsed = ParseResult(listOf(p(D, "tesco", 400), p(D, "unknown", 100, TransactionKind.INCOME)), emptyList())
+        val prepared = service(parsed, lookup = lookup).prepare(emptyOcr, Bank.GENERIC, today)
+        assertEquals(listOf("Tesco" to TransactionKind.EXPENSE, "Unknown" to TransactionKind.INCOME), lookup.asked)
+        assertEquals(groceries, prepared.items[0].category)
+        assertNull(prepared.items[1].category)
+    }
+
+    @Test fun defaultSelection() = runBlocking {
+        val existing = FakeExisting(listOf(e(D, "Tesco", 400), e(D, "Other", 500)))
+        val parsed = ParseResult(listOf(p(D, "Tesco", 400), p(D, "Zed", 500), p(D, "Costa", 600), p(D, "Pend", 700, pending = true)), emptyList())
+        val items = service(parsed, existing).prepare(emptyOcr, Bank.GENERIC, today).items
+        assertEquals(listOf(DuplicateStatus.LIKELY, DuplicateStatus.POSSIBLE, DuplicateStatus.NONE, DuplicateStatus.NONE), items.map { it.duplicate })
+        assertEquals(listOf(false, true, true, false), items.map { it.selected })
+    }
+
+    @Test fun incomeIsKept() = runBlocking {
+        val parsed = ParseResult(listOf(p(D, "Salary", 250000, TransactionKind.INCOME)), emptyList())
+        assertEquals(TransactionKind.INCOME, service(parsed).prepare(emptyOcr, Bank.GENERIC, today).items.single().kind)
+    }
+
+    @Test fun existingQueriedOnceWithPaddedRange() = runBlocking {
+        val existing = FakeExisting()
+        service(ParseResult(listOf(p(D, "A", 1), p(D.plusDays(3), "B", 2)), emptyList()), existing).prepare(emptyOcr, Bank.GENERIC, today)
+        assertEquals(1, existing.calls)
+        assertEquals(D.minusDays(1) to D.plusDays(4), existing.lastRange)
+    }
+
+    @Test fun existingFailureBecomesWarning() = runBlocking {
+        val existing = FakeExisting(fail = true)
+        val prepared = service(ParseResult(listOf(p(D, "A", 1)), listOf("w")), existing).prepare(emptyOcr, Bank.GENERIC, today)
+        assertEquals(listOf("w", "Could not check for duplicates"), prepared.warnings)
+        assertEquals(DuplicateStatus.NONE, prepared.items.single().duplicate)
+    }
+
+    @Test fun emptyParseCallsNoPorts() = runBlocking {
+        val failing = object : ExistingTransactionsSource {
+            override suspend fun between(from: LocalDate, to: LocalDate): List<ExistingTx> = error("must not be called")
+        }
+        val lookup = object : VendorCategoryLookup {
+            override suspend fun categoryFor(vendor: String, kind: TransactionKind): CategoryRef? = error("must not be called")
+        }
+        val svc = ImportService(failing, lookup, upper, FakeWriter(), parserFor = { FakeParser(ParseResult(emptyList(), listOf("No transactions found"))) })
+        val prepared = svc.prepare(emptyOcr, Bank.GENERIC, today)
+        assertTrue(prepared.items.isEmpty())
+        assertEquals(listOf("No transactions found"), prepared.warnings)
+    }
+}
+
+class ImportServiceCommitTest {
+    private fun item(id: Int, date: LocalDate, selected: Boolean = true, category: CategoryRef? = groceries, vendor: String = "V$id") =
+        ReviewItem(id, selected, date, vendor, 100L + id, TransactionKind.EXPENSE, category, DuplicateStatus.NONE, false, false, "raw")
+
+    private fun svc(writer: FakeWriter) = service(ParseResult(emptyList(), emptyList()), writer = writer)
+
+    @Test fun onlySelected() = runBlocking {
+        val writer = FakeWriter()
+        val r = svc(writer).commit(listOf(item(0, D), item(1, D, selected = false)))
+        assertEquals(CommitResult(1, 0, 0), r)
+        assertEquals(1, writer.written.size)
+    }
+
+    @Test fun missingCategorySkipped() = runBlocking {
+        val writer = FakeWriter()
+        val r = svc(writer).commit(listOf(item(0, D, category = null), item(1, D)))
+        assertEquals(CommitResult(1, 0, 1), r)
+    }
+
+    @Test fun failureDoesNotStopTheRest() = runBlocking {
+        val writer = FakeWriter(failOnCall = setOf(2))
+        val r = svc(writer).commit(listOf(item(0, D), item(1, D.plusDays(1)), item(2, D.plusDays(2))))
+        assertEquals(CommitResult(2, 1, 0), r)
+        assertEquals(listOf("V0", "V2"), writer.written.map { it.vendor })
+    }
+
+    @Test fun ascendingDateOrder() = runBlocking {
+        val writer = FakeWriter()
+        svc(writer).commit(listOf(item(0, D.plusDays(2)), item(1, D), item(2, D.plusDays(1))))
+        assertEquals(listOf(D, D.plusDays(1), D.plusDays(2)), writer.written.map { it.date })
+    }
+
+    @Test fun emptyInput() = runBlocking {
+        val writer = FakeWriter()
+        assertEquals(CommitResult(0, 0, 0), svc(writer).commit(emptyList()))
+        assertTrue(writer.written.isEmpty())
+    }
+
+    @Test fun cancellationPropagates() {
+        var thrown: Throwable? = null
+        try {
+            runBlocking { svc(FakeWriter(cancelOnCall = 1)).commit(listOf(item(0, D))) }
+        } catch (t: Throwable) {
+            thrown = t
+        }
+        assertTrue(thrown is CancellationException)
+    }
+
+    @Test fun newTransactionCarriesFields() = runBlocking {
+        val writer = FakeWriter()
+        svc(writer).commit(listOf(item(3, D, vendor = "Tesco")))
+        assertEquals(NewTransaction(D, "Tesco", 103L, TransactionKind.EXPENSE, "c1"), writer.written.single())
+    }
+}
+
+class OneShotHolderTest {
+    @Test fun behaviour() {
+        val h = OneShotHolder<String>()
+        assertNull(h.take()); assertFalse(h.hasValue())
+        h.set("a"); assertTrue(h.hasValue())
+        assertEquals("a", h.take()); assertNull(h.take())
+        h.set("a"); h.set("b"); assertEquals("b", h.take())
+    }
+}
+
+class MoneyFormatTest {
+    @Test fun format() {
+        assertEquals("£12.50", formatMinor(1250, TransactionKind.EXPENSE))
+        assertEquals("£0.05", formatMinor(5, TransactionKind.EXPENSE))
+        assertEquals("+£2,500.00", formatMinor(250000, TransactionKind.INCOME))
+        assertEquals("£0.00", formatMinor(0, TransactionKind.EXPENSE))
+    }
+
+    @Test fun parse() {
+        assertEquals(1250L, parseMinor("12.5")); assertEquals(1250L, parseMinor("12.50")); assertEquals(1250L, parseMinor("12,50"))
+        assertEquals(123450L, parseMinor("1,234.50")); assertEquals(0L, parseMinor("0"))
+        assertNull(parseMinor("")); assertNull(parseMinor("12.345")); assertNull(parseMinor("-3")); assertNull(parseMinor("abc"))
+    }
+}
+
+// ---------------- view model ----------------
+
+private fun fakeImage() = ImageRef("content://test/image/1")
+private class FakeOcr(var result: OcrResult = emptyOcr, var fail: Boolean = false) : OcrEngine {
+    var calls = 0
+    override suspend fun recognise(image: ImageRef): OcrResult {
+        calls++
+        if (fail) throw IllegalStateException("secret ocr text £12.50")
+        return result
+    }
+}
+private class FakeCategories : CategorySource {
+    override suspend fun list(kind: TransactionKind) = if (kind == TransactionKind.EXPENSE) listOf(groceries, eatingOut) else listOf(salaryCat)
+}
+private class FakeBankStore(var value: Bank? = null) : LastBankStore {
+    override fun get() = value
+    override fun set(bank: Bank) { value = bank }
+}
+
+class ImportViewModelTest {
+    private val clock = Clock.fixed(LocalDate.of(2026, 10, 24).atStartOfDay().toInstant(ZoneOffset.UTC), ZoneOffset.UTC)
+    private val parsed = ParseResult(
+        listOf(
+            p(D, "tesco", 1250),
+            p(D, "costa", 340),
+            p(D, "salary", 250000, TransactionKind.INCOME),
+        ),
+        emptyList(),
+    )
+
+    private class Rig(val vm: ImportViewModel, val ocr: FakeOcr, val store: FakeBankStore, val writer: FakeWriter)
+
+    private fun rig(lookup: FakeLookup = FakeLookup(mapOf("Tesco" to groceries)), writer: FakeWriter = FakeWriter(), ocr: FakeOcr = FakeOcr(), store: FakeBankStore = FakeBankStore()): Rig {
+        val svc = service(parsed, lookup = lookup, writer = writer)
+        return Rig(ImportViewModel(ocr, svc, FakeCategories(), store, clock), ocr, store, writer)
+    }
+
+    @Test fun initialState() {
+        assertEquals(Phase.PICK, rig().vm.state.value.phase)
+        assertEquals(Bank.GENERIC, rig().vm.state.value.bank)
+        assertEquals(Bank.MONZO, rig(store = FakeBankStore(Bank.MONZO)).vm.state.value.bank)
+        assertFalse(rig().vm.state.value.includeIncome)
+    }
+
+    @Test fun bankPersisted() {
+        val r = rig(); r.vm.onBankSelected(Bank.REVOLUT)
+        assertEquals(Bank.REVOLUT, r.store.value)
+    }
+
+    @Test fun pickSuccess() {
+        val r = rig(); r.vm.onImagePicked(fakeImage())
+        val s = r.vm.state.value
+        assertEquals(Phase.REVIEW, s.phase); assertEquals(3, s.items.size)
+        assertEquals(2, s.expenseCategories.size); assertEquals(1, s.incomeCategories.size)
+    }
+
+    @Test fun ocrFailureIsGeneric() {
+        val r = rig(ocr = FakeOcr(fail = true)); r.vm.onImagePicked(fakeImage())
+        val s = r.vm.state.value
+        assertEquals(Phase.PICK, s.phase)
+        assertEquals("Could not read this image. Try another screenshot or a different bank.", s.error)
+        assertFalse(s.error!!.contains("secret"))
+    }
+
+    @Test fun incomeHiddenByDefaultAndEditsSurviveToggle() {
+        val r = rig(); r.vm.onImagePicked(fakeImage())
+        assertEquals(2, r.vm.state.value.visibleItems.size); assertEquals(1, r.vm.state.value.hiddenIncomeCount)
+        r.vm.onItemChanged(1) { it.copy(vendor = "Edited") }
+        r.vm.onIncludeIncomeChanged(true)
+        assertEquals(3, r.vm.state.value.visibleItems.size); assertEquals(0, r.vm.state.value.hiddenIncomeCount)
+        assertEquals("Edited", r.vm.state.value.items[1].vendor)
+    }
+
+    @Test fun selectAllOnlyTouchesVisible() {
+        val r = rig(); r.vm.onImagePicked(fakeImage())
+        r.vm.onSelectAllVisible(false)
+        assertEquals(listOf(false, false, true), r.vm.state.value.items.map { it.selected })
+        r.vm.onToggleSelected(0)
+        assertTrue(r.vm.state.value.items[0].selected)
+    }
+
+    @Test fun applyCategoryToMissing() {
+        val r = rig(); r.vm.onImagePicked(fakeImage())
+        r.vm.onApplyCategoryToMissing(eatingOut)
+        val items = r.vm.state.value.items
+        assertEquals(groceries, items[0].category)          // already had one
+        assertEquals(eatingOut, items[1].category)          // was missing
+        assertNull(items[2].category)                       // income: other kind, hidden
+        r.vm.onApplyCategoryToMissing(salaryCat)
+        assertNull(r.vm.state.value.items[2].category)      // hidden income untouched
+    }
+
+    @Test fun confirmBlockedWithoutCategory() {
+        val r = rig(); r.vm.onImagePicked(fakeImage())
+        assertFalse(r.vm.state.value.canImport)
+        r.vm.onConfirmImport()
+        assertEquals("Choose a category for 1 item(s)", r.vm.state.value.error)
+        assertEquals(Phase.REVIEW, r.vm.state.value.phase)
+        assertTrue(r.writer.written.isEmpty())
+    }
+
+    @Test fun confirmHappyPath() {
+        val r = rig(); r.vm.onImagePicked(fakeImage())
+        r.vm.onApplyCategoryToMissing(eatingOut)
+        r.vm.onConfirmImport()
+        val s = r.vm.state.value
+        assertEquals(Phase.DONE, s.phase); assertEquals(CommitResult(2, 0, 0), s.result)
+        assertEquals(2, r.writer.written.size)
+        assertTrue(r.writer.written.none { it.kind == TransactionKind.INCOME })
+    }
+
+    @Test fun nothingSelected() {
+        val r = rig(); r.vm.onImagePicked(fakeImage()); r.vm.onSelectAllVisible(false)
+        r.vm.onConfirmImport()
+        assertEquals("Nothing selected", r.vm.state.value.error)
+    }
+
+    @Test fun allWritesFailGoesBackToReview() {
+        val r = rig(writer = FakeWriter(failOnCall = setOf(1, 2))); r.vm.onImagePicked(fakeImage())
+        r.vm.onApplyCategoryToMissing(eatingOut); r.vm.onConfirmImport()
+        val s = r.vm.state.value
+        assertEquals(Phase.REVIEW, s.phase); assertEquals("Saving failed. Nothing was saved; try again.", s.error)
+        assertEquals(3, s.items.size)
+    }
+
+    @Test fun startOverDropsCachedOcr() {
+        val r = rig(); r.vm.onImagePicked(fakeImage()); r.vm.onStartOver()
+        val s = r.vm.state.value
+        assertEquals(Phase.PICK, s.phase); assertTrue(s.items.isEmpty())
+        r.vm.onBankSelected(Bank.MONZO)
+        assertEquals(Phase.PICK, r.vm.state.value.phase)
+        assertEquals(1, r.ocr.calls)
+    }
+
+    @Test fun bankChangeInReviewReparsesWithoutOcr() {
+        val r = rig(); r.vm.onImagePicked(fakeImage())
+        r.vm.onItemChanged(0) { it.copy(vendor = "Edited") }
+        r.vm.onBankSelected(Bank.MONZO)
+        assertEquals(1, r.ocr.calls)
+        assertEquals(Phase.REVIEW, r.vm.state.value.phase)
+        assertEquals("Tesco", r.vm.state.value.items[0].vendor)       // edits are lost by design
+    }
+
+    @Test fun emptyPrepareStaysInReviewWithWarnings() {
+        val empty = ParseResult(emptyList(), listOf("No transactions found"))
+        val svc = service(empty)
+        val vm = ImportViewModel(FakeOcr(), svc, FakeCategories(), FakeBankStore(), clock)
+        vm.onImagePicked(fakeImage())
+        assertEquals(Phase.REVIEW, vm.state.value.phase)
+        assertEquals(listOf("No transactions found"), vm.state.value.warnings)
+        assertNull(vm.state.value.error)
+    }
+}
+
+// ---------------- end-to-end on the JVM (T26) ----------------
+
+class ImportFlowIntegrationTest {
+    private class Store : ExistingTransactionsSource, TransactionWriter {
+        val saved = mutableListOf<NewTransaction>()
+        override suspend fun between(from: LocalDate, to: LocalDate) =
+            saved.filter { it.date in from..to }.map { ExistingTx(it.date, it.amountMinor, it.kind, it.vendor) }
+        override suspend fun add(tx: NewTransaction) { saved += tx }
+    }
+
+    private val clock = Clock.fixed(LocalDate.of(2026, 10, 24).atStartOfDay().toInstant(ZoneOffset.UTC), ZoneOffset.UTC)
+
+    @Test fun importTwiceFlagsDuplicates() {
+        val store = Store()
+        val ocr = FakeOcr(Fixtures.loadOcr("generic/sample-synthetic"))
+        val lookup = FakeLookup(mapOf("Tesco" to groceries))
+        val svc = ImportService(store, lookup, upper, store)          // real parser registry
+        val vm = ImportViewModel(ocr, svc, FakeCategories(), FakeBankStore(), clock)
+
+        vm.onImagePicked(fakeImage())
+        assertEquals(listOf("Tesco", "Salary", "Costa"), vm.state.value.items.map { it.vendor })
+        assertEquals(2, vm.state.value.visibleItems.size)
+        vm.onApplyCategoryToMissing(eatingOut)
+        vm.onConfirmImport()
+        assertEquals(Phase.DONE, vm.state.value.phase)
+        assertEquals(listOf("Costa", "Tesco"), store.saved.map { it.vendor })       // ascending date, income not written
+
+        vm.onStartOver()
+        vm.onImagePicked(fakeImage())
+        val again = vm.state.value
+        assertEquals(DuplicateStatus.LIKELY, again.items[0].duplicate)               // Tesco
+        assertEquals(DuplicateStatus.NONE, again.items[1].duplicate)                 // Salary (never saved)
+        assertEquals(DuplicateStatus.LIKELY, again.items[2].duplicate)               // Costa
+        assertTrue(again.importable.isEmpty())
+        assertFalse(again.canImport)
+    }
+}

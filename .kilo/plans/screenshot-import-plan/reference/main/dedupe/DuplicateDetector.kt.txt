@@ -1,0 +1,57 @@
+package com.example.expenses.importer.dedupe
+
+import com.example.expenses.importer.model.ParsedTransaction
+import com.example.expenses.importer.model.TransactionKind
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
+import kotlin.math.abs
+
+enum class DuplicateStatus { NONE, POSSIBLE, LIKELY }
+
+data class ExistingTx(
+    val date: LocalDate,
+    val amountMinor: Long,
+    val kind: TransactionKind,
+    val vendor: String,
+)
+
+object DuplicateDetector {
+    /** One status per parsed item, same size and order as [parsed]. */
+    fun detect(parsed: List<ParsedTransaction>, existing: List<ExistingTx>): List<DuplicateStatus> {
+        val statuses = MutableList(parsed.size) { DuplicateStatus.NONE }
+        val available = existing.toMutableList()      // each saved transaction can explain only one parsed row
+
+        // Pass 1: same date, amount, kind and a similar vendor.
+        for (i in parsed.indices) {
+            val p = parsed[i]
+            val j = available.indexOfFirst {
+                it.date == p.date && it.amountMinor == p.amountMinor && it.kind == p.kind && fuzzyEqual(it.vendor, p.vendor)
+            }
+            if (j >= 0) {
+                statuses[i] = DuplicateStatus.LIKELY
+                available.removeAt(j)
+            }
+        }
+
+        // Pass 2: date within one day, same amount and kind, any vendor.
+        for (i in parsed.indices) {
+            if (statuses[i] != DuplicateStatus.NONE) continue
+            val p = parsed[i]
+            val j = available.indexOfFirst {
+                abs(ChronoUnit.DAYS.between(it.date, p.date)) <= 1 && it.amountMinor == p.amountMinor && it.kind == p.kind
+            }
+            if (j >= 0) {
+                statuses[i] = DuplicateStatus.POSSIBLE
+                available.removeAt(j)
+            }
+        }
+        return statuses
+    }
+
+    private fun fuzzyEqual(a: String, b: String): Boolean {
+        val na = a.lowercase().filter { it.isLetterOrDigit() }
+        val nb = b.lowercase().filter { it.isLetterOrDigit() }
+        if (na == nb) return true
+        return minOf(na.length, nb.length) >= 3 && (na.contains(nb) || nb.contains(na))
+    }
+}

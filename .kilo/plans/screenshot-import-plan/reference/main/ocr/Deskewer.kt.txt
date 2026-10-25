@@ -1,0 +1,41 @@
+package com.example.expenses.importer.ocr
+
+import com.example.expenses.importer.model.OcrBox
+import com.example.expenses.importer.model.OcrResult
+import com.example.expenses.importer.model.OcrWord
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
+
+/** Straightens a slightly tilted photo of a screen, using the angle ML Kit reports for each word. Pure rotation only. */
+object Deskewer {
+    private const val MIN_DEGREES = 0.5
+    private const val MAX_DEGREES = 15.0
+
+    fun deskew(ocr: OcrResult): OcrResult {
+        if (ocr.words.isEmpty()) return ocr
+        val angles = ocr.words.map { it.angleDeg.toDouble() }.sorted()
+        val mid = angles.size / 2
+        val median = if (angles.size % 2 == 1) angles[mid] else (angles[mid - 1] + angles[mid]) / 2.0
+        if (abs(median) < MIN_DEGREES || abs(median) > MAX_DEGREES) return ocr
+
+        val theta = Math.toRadians(-median)       // undo the tilt
+        val cx = ocr.imageWidth / 2.0
+        val cy = ocr.imageHeight / 2.0
+        val words = ocr.words.map { w ->
+            val dx = w.box.centerX - cx
+            val dy = w.box.centerY - cy
+            val nx = cx + dx * cos(theta) - dy * sin(theta)
+            val ny = cy + dx * sin(theta) + dy * cos(theta)
+            val halfW = w.box.width / 2.0
+            val halfH = w.box.height / 2.0
+            OcrWord(
+                w.text,
+                OcrBox((nx - halfW).roundToInt(), (ny - halfH).roundToInt(), (nx + halfW).roundToInt(), (ny + halfH).roundToInt()),
+                0f,
+            )
+        }
+        return ocr.copy(words = words)
+    }
+}

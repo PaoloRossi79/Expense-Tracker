@@ -1,0 +1,30 @@
+package com.example.expenses.importer.parsing
+
+enum class AmountSign { MINUS, PLUS, NONE }
+
+data class ParsedAmount(val minor: Long, val sign: AmountSign)
+
+object AmountParser {
+    private val PATTERN =
+        Regex("""^([+-])?([£E])?([+-])?(\d{1,3}(?:,\d{3})+|\d+)\.(\d{2})$""")
+
+    fun parse(text: String): ParsedAmount? {
+        val cleaned = text
+            .replace('−', '-')
+            .replace('–', '-')
+            .replace('—', '-')
+            .filter { !it.isWhitespace() }
+        val m = PATTERN.matchEntire(cleaned) ?: return null
+        val before = m.groupValues[1]
+        val after = m.groupValues[3]
+        if (before.isNotEmpty() && after.isNotEmpty()) return null
+        val sign = when (before.ifEmpty { after }) {
+            "-" -> AmountSign.MINUS
+            "+" -> AmountSign.PLUS
+            else -> AmountSign.NONE
+        }
+        val whole = m.groupValues[4].replace(",", "").toLongOrNull() ?: return null
+        val pence = m.groupValues[5].toLong()
+        return ParsedAmount(whole * 100 + pence, sign)
+    }
+}

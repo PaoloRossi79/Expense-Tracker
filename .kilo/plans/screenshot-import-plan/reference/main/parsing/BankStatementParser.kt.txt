@@ -1,0 +1,11 @@
+package com.example.expenses.importer.parsing
+
+import com.example.expenses.importer.model.Bank
+import com.example.expenses.importer.model.OcrResult
+import com.example.expenses.importer.model.ParseResult
+import java.time.LocalDate
+
+interface BankStatementParser {
+    val bank: Bank
+    fun parse(ocr: OcrResult, today: LocalDate): ParseResult
+}
